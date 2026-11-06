@@ -1,0 +1,34 @@
+# correctiond settings, written by the Correctiond Companion preferences
+# (Extensions > Correctiond Companion > Settings). The engine reads this file
+# when it starts: restart it from that window to apply changes.
+
+# Input source while GJS OSK is open, so its keys type what they show
+# ("" = keep the current one). The old source returns when it closes.
+osk_source = "correctiond:colemak"
+# Older companions read only this: true = switch to correctiond:us.
+auto_switch_osk = false
+
+# Apps (window class / Wayland app id, case-insensitive) where typos are
+# fixed. Every other app only learns. Terminals get prose-only fixes.
+allowlist = [
+    "firefox",
+    "zen",
+    "org.gnome.TextEditor",
+]
+
+# Apps whose text editing breaks corrections: they only learn.
+broken = [
+    "org.example.Broken",
+]
+
+[[languages]]
+code = "en"
+lexicon = "builtin:en"
+
+[[languages]]
+code = "tl"
+lexicon = "~/.local/share/correctiond/lexicons/tl.txt"
+
+[[languages]]
+code = "war"
+lexicon = "/opt/lex/wa\"r\\x.txt"

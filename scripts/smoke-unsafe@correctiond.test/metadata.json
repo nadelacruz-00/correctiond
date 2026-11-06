@@ -1,0 +1,6 @@
+{
+  "uuid": "smoke-unsafe@correctiond.test",
+  "name": "Correctiond smoke: unsafe mode",
+  "description": "Test-only, for scripts/extension-smoke.sh: turns on unsafe mode so org.gnome.Shell.Eval works in the headless shell. Installed only into the smoke's temp HOME; never shipped.",
+  "shell-version": ["50"]
+}

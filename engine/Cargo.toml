@@ -1,0 +1,67 @@
+[package]
+name = "engine"
+version = "0.1.0"
+edition = "2021"
+license.workspace = true
+description = "Local IBus autocorrect engine with learning"
+
+# The decision code (EngineState and the lexicon loader) as a library, so
+# examples/replay.rs runs exactly what the engine runs (eng review D5).
+# Everything else stays private to the binary.
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "engine"
+path = "src/main.rs"
+
+# Dev-only replay evaluator; examples are never packaged.
+[[example]]
+name = "replay"
+test = true
+
+[dependencies]
+corelib = { path = "../corelib" }
+# Without default-features = false, zbus 5 also pulls in async-io.
+zbus = { version = "5", default-features = false, features = ["tokio"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "signal", "sync"] }
+libc = "0.2"
+toml = "0.9"
+serde = { version = "1", features = ["derive"] }
+# oo7's defaults are tokio + native_crypto; both crypto backends at once is a
+# compile error, so pick openssl explicitly.
+oo7 = { version = "0.6", default-features = false, features = ["tokio", "openssl_crypto"] }
+# Plain `async fn` in a trait does not give Send futures, which tokio::spawn needs.
+async-trait = "0.1"
+zeroize = "1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["test-util"] }
+serde_json = "1"
+tempfile = "3"
+# Fault injection in the persistence tests (a second connection adds a
+# failing trigger). Same version and feature as corelib, so nothing new is
+# built.
+rusqlite = { version = "0.40", features = ["bundled-sqlcipher"] }
+# p2p only for the in-process ordering tests; resolver 2 keeps it out of the
+# shipped binary.
+zbus = { version = "5", default-features = false, features = ["tokio", "p2p"] }
+
+[package.metadata.deb]
+name = "correctiond"
+maintainer = "correctiond contributors <noreply@users.noreply.github.com>"
+copyright = "correctiond contributors"
+license-file = ["../LICENSE-MIT", "0"]
+extended-description = "An IBus engine that autocorrects typing locally and learns from corrections. Nothing leaves the machine."
+section = "utils"
+priority = "optional"
+depends = "$auto"
+# Explicit list: only what is named here is packaged.
+assets = [
+    ["target/release/engine", "usr/lib/correctiond/engine", "755"],
+    ["../data/correctiond.xml", "usr/share/ibus/component/correctiond.xml", "644"],
+    ["../debian/apport-ignore", "etc/apport/report-ignore/correctiond", "644"],
+    ["../LICENSE-MIT", "usr/share/doc/correctiond/LICENSE-MIT", "644"],
+    ["../LICENSE-APACHE", "usr/share/doc/correctiond/LICENSE-APACHE", "644"],
+    ["../data/ATTRIBUTION.md", "usr/share/doc/correctiond/ATTRIBUTION.md", "644"],
+]

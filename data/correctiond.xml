@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- IBus component for correctiond. One process serves both engines: the
+     engine name passed to Factory.CreateEngine selects the layout variant.
+     scripts/install-dev.sh rewrites the exec element (packaged: /usr/lib/correctiond/engine) to the absolute dev
+     binary path. -->
+<component>
+    <name>org.freedesktop.IBus.Correctiond</name>
+    <description>Local smart autocorrect with learning</description>
+    <exec>/usr/lib/correctiond/engine</exec>
+    <version>0.1.0</version>
+    <author>correctiond contributors</author>
+    <license>MIT OR Apache-2.0</license>
+    <textdomain>correctiond</textdomain>
+    <engines>
+        <engine>
+            <name>correctiond:colemak</name>
+            <longname>Colemak, autocorrect</longname>
+            <description>Colemak with local autocorrect</description>
+            <language>en</language>
+            <license>MIT OR Apache-2.0</license>
+            <author>correctiond contributors</author>
+            <icon>ibus-keyboard</icon>
+            <layout>us+colemak</layout>
+            <symbol>CO</symbol>
+            <rank>0</rank>
+        </engine>
+        <engine>
+            <name>correctiond:us</name>
+            <longname>US, autocorrect</longname>
+            <description>US QWERTY with local autocorrect</description>
+            <language>en</language>
+            <license>MIT OR Apache-2.0</license>
+            <author>correctiond contributors</author>
+            <icon>ibus-keyboard</icon>
+            <layout>us</layout>
+            <symbol>US</symbol>
+            <rank>0</rank>
+        </engine>
+    </engines>
+</component>

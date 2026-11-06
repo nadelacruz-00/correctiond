@@ -1,0 +1,7 @@
+{
+  "uuid": "correctiond-companion@nadelacruz-00.github.io",
+  "name": "Correctiond Companion",
+  "description": "Tells the correctiond autocorrect engine which app has focus and whether GJS OSK is on screen, adds an Autocorrect quick menu (app status, counts, a \"Learn new words\" switch, recently learned words you can forget), and has a Settings window for the autocorrect configuration, including \"Forget all learned words\".",
+  "shell-version": ["50"],
+  "url": "https://github.com/nadelacruz-00"
+}

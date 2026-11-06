@@ -1,0 +1,27 @@
+# Status vectors. Shared by the engine test (control.rs, every pair GetStatus
+# can report has a row and every row is such a pair) and the extension test
+# (lib.test.js, statusText gives these texts), so the Rust codes and the menu
+# texts cannot drift.
+#
+# Format: app_mode<TAB>app_reason<TAB>appLine<TAB>subtitle, one row per pair.
+# app_mode is correct, learn_only, off or none; app_reason is a reason code,
+# empty with none. NAME stands for the focused app's name. Texts are the spec's
+# "App state line" table (docs/superpowers/specs/
+# 2026-11-06-quick-settings-status-and-learning-design.md). Lines starting
+# with # are comments.
+#
+# "Engine not running", "enabled = false" and "learning = false" are not
+# pairs: the extension handles them before looking up a row.
+#
+# off/no_replace (an allowlisted terminal whose field cannot take a
+# replacement) has no row of its own in the spec table: it reuses the
+# no_replace app line and the off-in-this-field subtitle.
+correct	allowlisted	Correcting in NAME	Correcting in NAME
+learn_only	not_listed	Not correcting in NAME (not in your app list)	Learning only in NAME
+learn_only	broken	Not correcting in NAME (marked broken)	Learning only in NAME
+learn_only	unidentified	Not correcting here (app not identified)	Learning only
+learn_only	no_replace	Not correcting in NAME (this text field doesn't support it)	Learning only in NAME
+off	private_field	Off in this field (password or private)	Off in this field
+off	terminal	Off in this terminal (not in your app list, or marked broken)	Off in this field
+off	no_replace	Not correcting in NAME (this text field doesn't support it)	Off in this field
+none		No text field yet	Autocorrect

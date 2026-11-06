@@ -1,0 +1,16 @@
+{
+  "signature": "(sa{sv}sv)",
+  "fields": [
+    "IBusText",
+    {},
+    "build ",
+    {
+      "signature": "(sa{sv}av)",
+      "fields": [
+        "IBusAttrList",
+        {},
+        []
+      ]
+    }
+  ]
+}

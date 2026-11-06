@@ -1,0 +1,48 @@
+# Primary-language vectors. Shared by the corelib dictionary test
+# (Dictionary::primary_lang) and the importers' tests (correctiond-import-cookbook), so the Rust and
+# Python rules cannot drift.
+#
+# Format: a line "[en]", "[tl]" or "[war]" starts a lexicon section, read with
+# the normal lexicon parser (word<TAB>count; repeated words are summed). A line
+# "[expect]" starts the expectations: word<TAB>language, where language is
+# en, tl, war, or none for a word in no lexicon. Lexicons load in the order
+# en, tl, war (LangId 0, 1, 2). Lines starting with # are comments.
+#
+# Totals: en 10000, tl 1000, war 500, so per-million frequency is count*100 in
+# en, count*1000 in tl and count*2000 in war.
+[en]
+the	9000
+hello	500
+may	400
+tie	100
+[tl]
+ang	860
+may	50
+kita	50
+ako	20
+dup	5
+dup	5
+tie	10
+[war]
+Maupay	451
+kita	25
+ako	15
+tie	5
+dup	4
+[expect]
+# only in en
+the	en
+# only in war, written capitalized in its lexicon
+maupay	war
+# three-way tie (10000 per million each): the first language, en, wins
+tie	en
+# tl/war tie (50000 each): tl, listed before war, wins
+kita	tl
+# en/tl shared: fewer raw counts in tl (50 vs 400) but higher per million (50000 vs 40000)
+may	tl
+# tl/war shared: fewer raw counts in war (15 vs 20) but higher per million (30000 vs 20000)
+ako	war
+# repeated tl entry summed (10 -> 10000) beats war 4 (8000); unsummed (5000) would lose
+dup	tl
+# in no lexicon
+zzz	none

@@ -48,6 +48,7 @@ jobs:
       # scripts/e2e.sh runs inside dbus-run-session with a private ibus-daemon.
       - run: bash scripts/e2e.sh
       - run: python3 -m unittest discover scripts
+      - run: bash scripts/test_install_sh.sh
       - run: gjs -m extension/test/lib.test.js
       # test/prefs.smoke.js needs a display and libadwaita >= 1.7: desktop only.
       - run: gjs -m extension/test/config.test.js

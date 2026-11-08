@@ -265,7 +265,10 @@ mod tests {
         )
         .unwrap();
         let mut rows = 0;
-        for line in tsv.lines().filter(|l| !l.trim().is_empty() && !l.starts_with('#')) {
+        for line in tsv
+            .lines()
+            .filter(|l| !l.trim().is_empty() && !l.starts_with('#'))
+        {
             let f: Vec<&str> = line.split('\t').collect();
             let home = tempfile::tempdir().unwrap();
             let lex = home.path().join(".local/share/correctiond/lexicons");

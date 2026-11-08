@@ -203,7 +203,7 @@ impl EngineState {
         {
             return;
         }
-        let layout = effective_layout(self.variant, osk_visible);
+        let layout = effective_layout(self.variant, osk_visible && cfg!(feature = "touch"));
         self.with_store(|s| s.record_slip(layout, removed, typed));
     }
 
@@ -252,7 +252,7 @@ impl EngineState {
             let ctx = self.lang.ctx();
             self.last_allowed = ctx.allowed.0;
             // Tap typos follow the OSK geometry, whatever engine variant is on.
-            let layout = effective_layout(self.variant, osk_visible);
+            let layout = effective_layout(self.variant, osk_visible && cfg!(feature = "touch"));
             let prev = self.prev.as_deref();
             let dict = &*self.dict;
             self.with_store(|s| decide(token, prev, layout, &ctx, dict, &*s))
@@ -331,7 +331,9 @@ impl EngineState {
 mod tests {
     use super::*;
     use corelib::dictionary::{Dictionary, LangId};
-    use corelib::layout::LayoutId::{self, Colemak, OskTap, Qwerty};
+    #[cfg(feature = "touch")]
+    use corelib::layout::LayoutId::OskTap;
+    use corelib::layout::LayoutId::{self, Colemak, Qwerty};
     use corelib::learning::LearnStore;
     use corelib::policy::Mode::{self, Observe, Off, ProseAware, Silent};
     use corelib::scoring::PersonalLookup;
@@ -872,6 +874,7 @@ mod tests {
         assert_eq!(t.word("bulid", SP, Silent, None), rep(5, "build ", true));
     }
 
+    #[cfg(feature = "touch")]
     #[test]
     fn backspace_fix_records_slip() {
         let mut t = new_with(Colemak);
@@ -903,6 +906,7 @@ mod tests {
         assert_eq!(t.slips(Colemak, 'n', 'e'), 0);
     }
 
+    #[cfg(feature = "touch")]
     #[test]
     fn osk_taps_are_scored_with_osk_geometry() {
         // "hwllp" for "hello": w and p neighbor e and o on the QWERTY OSK
@@ -920,6 +924,21 @@ mod tests {
             "OSK tap typo not fixed"
         );
         assert_eq!(typo(false), Action::Pass);
+    }
+
+    #[cfg(not(feature = "touch"))]
+    #[test]
+    fn osk_flag_is_ignored_without_touch() {
+        // Same input as osk_taps_are_scored_with_osk_geometry: without the
+        // touch feature the OSK flag changes nothing.
+        let typo = |osk: bool| {
+            let mut t = new_with(Colemak);
+            for c in "hwllp".chars() {
+                assert_eq!(t.e.on_key(Printable(c), Silent, osk, None), Action::Pass);
+            }
+            t.e.on_key(SP, Silent, osk, None)
+        };
+        assert_eq!(typo(true), typo(false));
     }
 
     #[test]

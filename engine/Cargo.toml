@@ -66,8 +66,25 @@ depends = "$auto"
 assets = [
     ["target/release/engine", "usr/lib/correctiond/engine", "755"],
     ["../data/correctiond.xml", "usr/share/ibus/component/correctiond.xml", "644"],
+    ["../data/correctiond-wrapper.sh", "usr/bin/correctiond", "755"],
     ["../debian/apport-ignore", "etc/apport/report-ignore/correctiond", "644"],
     ["../LICENSE-MIT", "usr/share/doc/correctiond/LICENSE-MIT", "644"],
     ["../LICENSE-APACHE", "usr/share/doc/correctiond/LICENSE-APACHE", "644"],
     ["../data/ATTRIBUTION.md", "usr/share/doc/correctiond/ATTRIBUTION.md", "644"],
+]
+
+# Same files as the deb, minus the Ubuntu-only apport ignore file. Requires
+# stay automatic, so libcrypto.so.3 comes from auto-req.
+[package.metadata.generate-rpm]
+name = "correctiond"
+license = "MIT OR Apache-2.0"
+summary = "Local IBus autocorrect engine that learns from corrections"
+description = "An IBus engine that autocorrects typing locally and learns from corrections. Nothing leaves the machine."
+assets = [
+    { source = "target/release/engine", dest = "/usr/lib/correctiond/engine", mode = "755" },
+    { source = "../data/correctiond.xml", dest = "/usr/share/ibus/component/correctiond.xml", mode = "644" },
+    { source = "../data/correctiond-wrapper.sh", dest = "/usr/bin/correctiond", mode = "755" },
+    { source = "../LICENSE-MIT", dest = "/usr/share/doc/correctiond/LICENSE-MIT", mode = "644" },
+    { source = "../LICENSE-APACHE", dest = "/usr/share/doc/correctiond/LICENSE-APACHE", mode = "644" },
+    { source = "../data/ATTRIBUTION.md", dest = "/usr/share/doc/correctiond/ATTRIBUTION.md", mode = "644" },
 ]

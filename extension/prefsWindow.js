@@ -44,6 +44,16 @@ function expandTilde(path) {
     return path.startsWith('~/') ? GLib.build_filenamev([GLib.get_home_dir(), path.slice(2)]) : path;
 }
 
+/**
+ * The codes from ['tl', 'war'] (in that order) whose lexicon file exists in
+ * `dataDir`/correctiond/lexicons, so the defaults keep a user's old languages.
+ */
+export function legacyLangs(dataDir = GLib.get_user_data_dir()) {
+    return ['tl', 'war'].filter(code => GLib.file_test(
+        GLib.build_filenamev([dataDir, 'correctiond', 'lexicons', `${code}.txt`]),
+        GLib.FileTest.IS_REGULAR));
+}
+
 export function defaultReportPath() {
     return GLib.build_filenamev([GLib.get_user_data_dir(), 'correctiond', 'import-report.json']);
 }
@@ -148,7 +158,7 @@ function installedApps() {
  *
  * @param {Adw.PreferencesWindow} window
  * @param {{configPath?: string, restartArgv?: string[], apps?: object[], reportPath?: string,
- *   layout?: string, companionCall?: (callback: (err: Error|null) => void) => void,
+ *   layout?: string, dataDir?: string, companionCall?: (callback: (err: Error|null) => void) => void,
  *   wordsCalls?: object}} opts - wordsCalls: see addWordsPage in wordsPage.js
  */
 export function fillWindow(window, opts = {}) {
@@ -169,7 +179,7 @@ export function fillWindow(window, opts = {}) {
     }
     const parsed = text === undefined
         ? {ok: false, error: 'the file cannot be read'}
-        : parseConfig(text);
+        : parseConfig(text, {legacyLangs: legacyLangs(opts.dataDir)});
     const readOnly = !parsed.ok;
     const model = parsed.ok ? parsed.config : null;
 

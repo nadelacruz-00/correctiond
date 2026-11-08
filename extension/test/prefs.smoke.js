@@ -11,8 +11,8 @@ import GObject from 'gi://GObject';
 import Gtk from 'gi://Gtk?version=4.0';
 import System from 'system';
 
-import {fillWindow, fmtRate, lexiconStatus, loadReport} from '../prefsWindow.js';
-import {parseConfig} from '../config.js';
+import {fillWindow, fmtRate, legacyLangs, lexiconStatus, loadReport} from '../prefsWindow.js';
+import {DEFAULT_ALLOWLIST, parseConfig} from '../config.js';
 import {SORTS} from '../lib.js';
 import {rowSubtitle} from '../wordsPage.js';
 
@@ -42,19 +42,35 @@ const mode = path => Gio.File.new_for_path(path)
 const apps = [{id: 'org.gnome.TextEditor', name: 'Text Editor & Notes', icon: null}];
 const newWindow = () => new Adw.PreferencesWindow();
 
+// Legacy lexicons: tl/war stay in the defaults only when their files exist.
+const noData = GLib.build_filenamev([dir, 'no-data']);
+const dataDir = GLib.build_filenamev([dir, 'data']);
+const lexDir = GLib.build_filenamev([dataDir, 'correctiond', 'lexicons']);
+GLib.mkdir_with_parents(lexDir, 0o700);
+check(legacyLangs(noData).length === 0, 'no legacy lexicons');
+GLib.file_set_contents(GLib.build_filenamev([lexDir, 'war.txt']), '');
+check(legacyLangs(dataDir).join() === 'war', 'war lexicon found');
+GLib.file_set_contents(GLib.build_filenamev([lexDir, 'tl.txt']), '');
+check(legacyLangs(dataDir).join() === 'tl,war', 'legacy lexicons in tl, war order');
+const enOnly = GLib.build_filenamev([dir, 'en-only.toml']);
+let ctl = fillWindow(newWindow(), {configPath: enOnly, restartArgv: ['true'], apps, dataDir: noData});
+check(ctl.removeApp('allowlist', 'firefox'), 'save without legacy lexicons');
+check(config(enOnly).languages.map(l => l.code).join() === 'en', 'English-only languages written');
+
 // An editable file in a directory that does not exist yet.
 const path = GLib.build_filenamev([dir, 'correctiond', 'config.toml']);
-let ctl = fillWindow(newWindow(), {configPath: path, restartArgv: ['true'], apps});
+ctl = fillWindow(newWindow(), {configPath: path, restartArgv: ['true'], apps, dataDir});
 check(!ctl.readOnly, 'missing file is editable');
-check(ctl.addApp('allowlist', 'org.gnome.TextEditor'), 'add app');
-check(config(path).allowlist.join() === 'firefox,org.gnome.TextEditor', 'allowlist written');
+check(ctl.addApp('allowlist', 'org.example.Notes'), 'add app');
+check(config(path).allowlist.join() === [...DEFAULT_ALLOWLIST, 'org.example.Notes'].join(), 'allowlist written');
 check(mode(path) === 0o600, `file mode ${mode(path).toString(8)}`);
 check(mode(GLib.path_get_dirname(path)) === 0o700, 'dir mode 0700');
 check(ctl.banners.length === 3 && ctl.banners.every(b => b.revealed), 'restart banners shown');
 check(!ctl.addApp('allowlist', 'ORG.GNOME.TEXTEDITOR'), 'duplicate refused');
 check(!ctl.addApp('allowlist', 'two words'), 'bad id refused');
 check(ctl.removeApp('allowlist', 'firefox'), 'remove app');
-check(config(path).allowlist.join() === 'org.gnome.TextEditor', 'removal written');
+check(config(path).allowlist.join() ===
+    [...DEFAULT_ALLOWLIST.filter(a => a !== 'firefox'), 'org.example.Notes'].join(), 'removal written');
 check(ctl.addApp('broken', 'org.example.Broken'), 'add broken');
 check(config(path).broken.join() === 'org.example.Broken', 'broken written');
 check(ctl.oskRow.selected === 1, 'OSK layout shows the default (QWERTY)');

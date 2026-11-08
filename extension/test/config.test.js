@@ -5,6 +5,7 @@ import GLib from 'gi://GLib';
 import System from 'system';
 import {
     defaultConfig,
+    DEFAULT_ALLOWLIST,
     parseConfig,
     serializeConfig,
     normalizeAppId,
@@ -42,9 +43,9 @@ function bad(text, needle, what) {
 
 const DEFAULT_LANGS = [
     {code: 'en', lexicon: 'builtin:en'},
-    {code: 'tl', lexicon: '~/.local/share/correctiond/lexicons/tl.txt'},
-    {code: 'war', lexicon: '~/.local/share/correctiond/lexicons/war.txt'},
 ];
+
+const ENGINE_ALLOWLIST = ['firefox', 'firefox_firefox', 'firefox-esr', 'org.mozilla.firefox', 'org.gnome.TextEditor'];
 
 // The model behind extension/test/fixtures/config.toml. engine/src/config.rs
 // reads that same file, so the engine and this writer agree on the format.
@@ -63,11 +64,31 @@ const FIXTURE_MODEL = {
 test('defaults match the engine', () => {
     const d = defaultConfig();
     eq(d.languages, DEFAULT_LANGS, 'languages');
-    eq(d.allowlist, ['firefox'], 'allowlist');
+    eq(d.allowlist, ENGINE_ALLOWLIST, 'allowlist');
     eq(d.broken, [], 'broken');
     eq(d.oskSource, 'correctiond:us', 'osk');
     eq(d.allowAnyCaller, false, 'any caller');
     eq(MAX_LANGUAGES, 16, 'max');
+});
+
+test('default allowlist matches the engine', () => {
+    eq(defaultConfig().allowlist, ENGINE_ALLOWLIST, 'allowlist');
+    eq(DEFAULT_ALLOWLIST, ENGINE_ALLOWLIST, 'const');
+});
+
+test('defaultConfig follows default-langs-vectors.tsv', () => {
+    const dir = GLib.path_get_dirname(GLib.filename_from_uri(import.meta.url)[0]);
+    const [, bytes] = GLib.file_get_contents(GLib.build_filenamev([dir, '..', '..', 'data', 'default-langs-vectors.tsv']));
+    const rows = new TextDecoder().decode(bytes).split('\n')
+        .filter(l => l.trim() !== '' && !l.startsWith('#'));
+    eq(rows.length, 4, 'row count');
+    for (const row of rows) {
+        const [tl, war, codes] = row.split('\t');
+        const legacyLangs = [];
+        if (tl === '1') legacyLangs.push('tl');
+        if (war === '1') legacyLangs.push('war');
+        eq(defaultConfig({legacyLangs}).languages.map(l => l.code).join(','), codes, row);
+    }
 });
 
 test('missing or empty file gives defaults', () => {

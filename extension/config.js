@@ -15,15 +15,29 @@ export const BUILTIN_EN = 'builtin:en';
 /** Default OSK switch target: what `auto_switch_osk = true` always meant. */
 export const US_ENGINE = 'correctiond:us';
 
-/** The engine's defaults (engine/src/config.rs `Config::default`). */
-export function defaultConfig() {
+/** Mirrors engine/src/config.rs `DEFAULT_ALLOWLIST`. */
+export const DEFAULT_ALLOWLIST = [
+    'firefox',
+    'firefox_firefox',
+    'firefox-esr',
+    'org.mozilla.firefox',
+    'org.gnome.TextEditor',
+];
+
+/**
+ * The engine's defaults (engine/src/config.rs `Config::default_for`): English,
+ * plus the codes in `legacyLangs` (from ['tl', 'war'], kept in that order)
+ * whose lexicon files already exist.
+ */
+export function defaultConfig({legacyLangs = []} = {}) {
+    const languages = [{code: 'en', lexicon: BUILTIN_EN}];
+    for (const code of ['tl', 'war']) {
+        if (legacyLangs.includes(code))
+            languages.push({code, lexicon: `~/.local/share/correctiond/lexicons/${code}.txt`});
+    }
     return {
-        languages: [
-            {code: 'en', lexicon: BUILTIN_EN},
-            {code: 'tl', lexicon: '~/.local/share/correctiond/lexicons/tl.txt'},
-            {code: 'war', lexicon: '~/.local/share/correctiond/lexicons/war.txt'},
-        ],
-        allowlist: ['firefox'],
+        languages,
+        allowlist: [...DEFAULT_ALLOWLIST],
         broken: [],
         // IBus engine to switch to while GJS OSK is open; '' = no switch.
         oskSource: US_ENGINE,

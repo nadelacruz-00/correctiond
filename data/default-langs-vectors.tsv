@@ -1,0 +1,7 @@
+# Legacy-language default rule, shared by engine/src/config.rs and
+# extension/test/config.test.js. tl_file<TAB>war_file<TAB>expected_codes;
+# flags are 0|1 (lexicon file present under ~/.local/share/correctiond/lexicons/).
+0	0	en
+1	0	en,tl
+0	1	en,war
+1	1	en,tl,war

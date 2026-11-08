@@ -29,19 +29,25 @@ pub struct Config {
     pub allow_any_caller: bool,
 }
 
+/// Apps that get autocorrect without being added by hand. Mirrored in
+/// `extension/config.js` `DEFAULT_ALLOWLIST`.
+pub const DEFAULT_ALLOWLIST: [&str; 5] = [
+    "firefox",
+    "firefox_firefox",
+    "firefox-esr",
+    "org.mozilla.firefox",
+    "org.gnome.TextEditor",
+];
+
 impl Default for Config {
+    /// English only. Use `default_for` to keep existing tl/war lexicons.
     fn default() -> Config {
-        let lang = |code: &str, lexicon: &str| LangSpec {
-            code: code.into(),
-            lexicon: lexicon.into(),
-        };
         Config {
-            languages: vec![
-                lang("en", "builtin:en"),
-                lang("tl", "~/.local/share/correctiond/lexicons/tl.txt"),
-                lang("war", "~/.local/share/correctiond/lexicons/war.txt"),
-            ],
-            allowlist: vec!["firefox".into()],
+            languages: vec![LangSpec {
+                code: "en".into(),
+                lexicon: "builtin:en".into(),
+            }],
+            allowlist: DEFAULT_ALLOWLIST.iter().map(|s| s.to_string()).collect(),
             broken: Vec::new(),
             auto_switch_osk: true,
             osk_source: None,
@@ -51,6 +57,23 @@ impl Default for Config {
 }
 
 impl Config {
+    /// English, plus `tl` and `war` when their lexicon files already exist
+    /// under `home` (installs from before English-only defaults keep them).
+    /// Lexicon paths stay in `~/` form.
+    pub fn default_for(home: &Path) -> Config {
+        let mut c = Config::default();
+        for code in ["tl", "war"] {
+            let rel = format!(".local/share/correctiond/lexicons/{code}.txt");
+            if home.join(&rel).is_file() {
+                c.languages.push(LangSpec {
+                    code: code.into(),
+                    lexicon: format!("~/{rel}"),
+                });
+            }
+        }
+        c
+    }
+
     pub fn path(home: &Path) -> PathBuf {
         home.join(".config/correctiond/config.toml")
     }
@@ -66,12 +89,12 @@ impl Config {
         let mut c = match std::fs::read_to_string(path) {
             Ok(text) => toml::from_str(&text).unwrap_or_else(|_| {
                 eprintln!("correctiond: config.toml is invalid, using defaults");
-                Config::default()
+                Config::default_for(home)
             }),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Config::default(),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Config::default_for(home),
             Err(_) => {
                 eprintln!("correctiond: config.toml is unreadable, using defaults");
-                Config::default()
+                Config::default_for(home)
             }
         };
         if c.languages.len() > MAX_LANGUAGES {
@@ -115,18 +138,54 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let home = Path::new("/home/u");
         let c = Config::load_from(&dir.path().join("missing.toml"), home);
-        assert_eq!(
-            c.languages,
-            vec![
-                lang("en", "builtin:en"),
-                lang("tl", "/home/u/.local/share/correctiond/lexicons/tl.txt"),
-                lang("war", "/home/u/.local/share/correctiond/lexicons/war.txt"),
-            ]
-        );
-        assert_eq!(c.allowlist, vec!["firefox".to_string()]);
+        assert_eq!(c.languages, vec![lang("en", "builtin:en")]);
+        assert_eq!(c.allowlist, DEFAULT_ALLOWLIST);
         assert!(c.broken.is_empty());
         assert!(c.auto_switch_osk);
         assert!(!c.allow_any_caller);
+    }
+
+    #[test]
+    fn default_allowlist_is_pinned() {
+        assert_eq!(
+            Config::default().allowlist,
+            [
+                "firefox",
+                "firefox_firefox",
+                "firefox-esr",
+                "org.mozilla.firefox",
+                "org.gnome.TextEditor"
+            ]
+        );
+    }
+
+    #[test]
+    fn default_for_follows_vectors() {
+        let tsv = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../data/default-langs-vectors.tsv"),
+        )
+        .unwrap();
+        let mut rows = 0;
+        for line in tsv.lines().filter(|l| !l.trim().is_empty() && !l.starts_with('#')) {
+            let f: Vec<&str> = line.split('\t').collect();
+            let home = tempfile::tempdir().unwrap();
+            let lex = home.path().join(".local/share/correctiond/lexicons");
+            std::fs::create_dir_all(&lex).unwrap();
+            if f[0] == "1" {
+                std::fs::write(lex.join("tl.txt"), "a\t1\n").unwrap();
+            }
+            if f[1] == "1" {
+                std::fs::write(lex.join("war.txt"), "a\t1\n").unwrap();
+            }
+            let c = Config::default_for(home.path());
+            let codes: Vec<&str> = c.languages.iter().map(|l| l.code.as_str()).collect();
+            assert_eq!(codes.join(","), f[2], "row {line}");
+            if let Some(tl) = c.languages.iter().find(|l| l.code == "tl") {
+                assert_eq!(tl.lexicon, "~/.local/share/correctiond/lexicons/tl.txt");
+            }
+            rows += 1;
+        }
+        assert_eq!(rows, 4);
     }
 
     #[test]

@@ -64,8 +64,10 @@ jobs:
             LICENSE-MIT LICENSE-APACHE data/ATTRIBUTION.md scripts/install.sh "$pkg/"
           tar -czf "dist/$pkg.tar.gz" "$pkg"
           # The wrapper must be listed in both packages.
-          dpkg-deb -c dist/*.deb | grep -q './usr/bin/correctiond$'
-          rpm -qlp dist/*.rpm | grep -qx /usr/bin/correctiond
+          dpkg-deb -c dist/*.deb | grep './usr/bin/correctiond$' >/dev/null
+          rpm -qlp dist/*.rpm | grep -x /usr/bin/correctiond >/dev/null
+          # The rpm must require OpenSSL 3 (spec 11.2).
+          rpm -qpR dist/*.rpm | grep 'libcrypto\.so\.3' >/dev/null
           # Version-free copies, one .sha256 per file (bare name in the line).
           cp dist/*.deb "dist/correctiond_${deb_arch}.deb"
           cp dist/*.rpm "dist/correctiond.${rpm_arch}.rpm"

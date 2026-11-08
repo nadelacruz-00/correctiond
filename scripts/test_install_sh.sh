@@ -95,5 +95,22 @@ n=$(printf '%s\n' "$out" | grep -c '^would install ')
 if [ $rc = 0 ] && [ "$n" = 3 ] && [ ! -e "$tmp/dest" ]; then ok dry_run_writes_nothing
 else bad dry_run_writes_nothing "rc=$rc lines=$n dest_exists=$([ -e "$tmp/dest" ] && echo y || echo n)"; fi
 
+# install-dev.sh refuses when a package owns the component; sudo must never run.
+fakebin=$tmp/fake-engine; printf '#!/bin/sh\nexit 0\n' >"$fakebin"; chmod +x "$fakebin"
+guard() { # manager-stub-dir
+  rm -f "$tmp/sudo-called"
+  d=$tmp/gstubs-$1; mkdir -p "$d"; cp "$tmp/stubs-$1"/* "$d/"
+  printf '#!/bin/sh\ntouch "%s"\nexit 1\n' "$tmp/sudo-called" >"$d/sudo"
+  printf '#!/bin/sh\ntouch "%s"\nexit 1\n' "$tmp/sudo-called" >"$d/cargo"
+  chmod +x "$d"/*
+  PATH=$d:$PATH INSTALL_DEV_BIN=$fakebin bash "$repo/scripts/install-dev.sh" >"$tmp/out" 2>"$tmp/err"
+  rc=$?; out=$(cat "$tmp/out"); err=$(cat "$tmp/err")
+}
+for m in dpkg rpm; do
+  guard $m
+  if [ -e "$tmp/sudo-called" ]; then bad install_dev_guard_$m "sudo or cargo was called"
+  else expect install_dev_guard_$m 1 err 'component path is owned by package correctiond' err 'sudo apt remove correctiond' err 'IBUS_COMPONENT_PATH'; fi
+done
+
 echo "$pass passed, $failn failed"
 [ "$failn" -eq 0 ]

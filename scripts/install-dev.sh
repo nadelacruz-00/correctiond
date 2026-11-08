@@ -5,7 +5,7 @@
 set -euo pipefail
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-bin="$repo/target/release/engine"
+bin="${INSTALL_DEV_BIN:-$repo/target/release/engine}"
 xml="$repo/data/correctiond.xml"
 dest=/usr/share/ibus/component/correctiond.xml
 
@@ -19,6 +19,15 @@ case "$bin" in
         exit 1
         ;;
 esac
+
+# Refuse when a package owns the component file; a manual install would fight it.
+owned=
+if command -v dpkg >/dev/null 2>&1 && dpkg -S "$dest" >/dev/null 2>&1; then owned=1; fi
+if command -v rpm >/dev/null 2>&1 && rpm -qf "$dest" >/dev/null 2>&1; then owned=1; fi
+if [[ -n "$owned" ]]; then
+    echo "component path is owned by package correctiond; run \`sudo apt remove correctiond\` (or \`sudo dnf remove correctiond\`) first, or use \`IBUS_COMPONENT_PATH\` for a dev build" >&2
+    exit 1
+fi
 
 tmp="$(mktemp)"
 trap 'rm -f "$tmp"' EXIT

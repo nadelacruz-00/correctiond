@@ -6,6 +6,10 @@
 //! harness, no installed XML needed). It also serves the control plane
 //! `org.nadelacruz.Correctiond1` on the session bus (`control.rs`).
 //!
+//! The first argument selects the mode (`dispatch`): none or `--register`
+//! start the engine, `import` and `doctor` are client modes, `--help` prints
+//! the usage, and anything else is a usage error (exit 64).
+//!
 //! `engine import FILE` is a client mode instead: it passes FILE (a
 //! "correctiond vocab v1" file, docs/vocab-format.md) to the running
 //! engine's `ImportVocabulary` and prints the counts or a fixed error.
@@ -64,6 +68,33 @@ fn quiet_panics() {
 const ANY_CALLER_WARNING: &str = "correctiond: WARNING: allow_any_caller is on; \
     any session-bus client can call the control interface";
 
+const CLI_USAGE: &str = "usage: correctiond doctor [--json] | correctiond import FILE";
+/// Exit code for a usage error (sysexits EX_USAGE).
+const EXIT_USAGE: u8 = 64;
+
+/// What the first command-line argument selects.
+#[derive(Debug, PartialEq)]
+enum Dispatch<'a> {
+    Engine { register: bool },
+    Import(&'a [std::ffi::OsString]),
+    Doctor(&'a [std::ffi::OsString]),
+    Help,
+    Usage,
+}
+
+fn dispatch(args: &[std::ffi::OsString]) -> Dispatch<'_> {
+    let Some(first) = args.first() else {
+        return Dispatch::Engine { register: false };
+    };
+    match first.to_str() {
+        Some("import") => Dispatch::Import(&args[1..]),
+        Some("doctor") => Dispatch::Doctor(&args[1..]),
+        Some("--help") => Dispatch::Help,
+        Some("--register") if args.len() == 1 => Dispatch::Engine { register: true },
+        _ => Dispatch::Usage,
+    }
+}
+
 const IMPORT_USAGE: &str = "usage: engine import FILE";
 const IMPORT_CANNOT_OPEN: &str = "cannot open the file";
 const IMPORT_NO_BUS: &str = "cannot reach the session bus";
@@ -101,7 +132,7 @@ fn import_ok_line(words: u32, pairs: u32) -> String {
 fn import_main(args: &[std::ffi::OsString]) -> ExitCode {
     let [path] = args else {
         eprintln!("{IMPORT_USAGE}");
-        return ExitCode::FAILURE;
+        return ExitCode::from(EXIT_USAGE);
     };
     let file = match std::fs::File::open(path) {
         Ok(f) => f,
@@ -159,10 +190,19 @@ fn main() -> ExitCode {
     quiet_panics();
     // Client mode, before any engine or IBus startup.
     let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
-    if args.first().is_some_and(|a| a == "import") {
-        return import_main(&args[1..]);
-    }
-    let register = std::env::args().skip(1).any(|a| a == "--register");
+    let register = match dispatch(&args) {
+        Dispatch::Import(rest) => return import_main(rest),
+        // Task 6 replaces this stub with `doctor::run(rest)`.
+        Dispatch::Doctor(_) | Dispatch::Usage => {
+            eprintln!("{CLI_USAGE}");
+            return ExitCode::from(EXIT_USAGE);
+        }
+        Dispatch::Help => {
+            println!("{CLI_USAGE}");
+            return ExitCode::SUCCESS;
+        }
+        Dispatch::Engine { register } => register,
+    };
     let rt = match tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -320,5 +360,32 @@ mod tests {
             ANY_CALLER_WARNING,
             "correctiond: WARNING: allow_any_caller is on; any session-bus client can call the control interface"
         );
+    }
+}
+
+#[cfg(test)]
+mod dispatch_tests {
+    use super::*;
+    use std::ffi::OsString;
+
+    fn v(a: &[&str]) -> Vec<OsString> {
+        a.iter().map(OsString::from).collect()
+    }
+
+    #[test]
+    fn dispatch_by_first_argument() {
+        assert_eq!(dispatch(&v(&[])), Dispatch::Engine { register: false });
+        assert_eq!(
+            dispatch(&v(&["--register"])),
+            Dispatch::Engine { register: true }
+        );
+        let a = v(&["import", "f"]);
+        assert_eq!(dispatch(&a), Dispatch::Import(&a[1..]));
+        let a = v(&["doctor", "--json"]);
+        assert_eq!(dispatch(&a), Dispatch::Doctor(&a[1..]));
+        assert_eq!(dispatch(&v(&["--help"])), Dispatch::Help);
+        for bad in [&["bogus"][..], &["--register", "x"], &["-v"]] {
+            assert_eq!(dispatch(&v(bad)), Dispatch::Usage);
+        }
     }
 }

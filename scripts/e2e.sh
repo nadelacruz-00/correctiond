@@ -106,6 +106,14 @@ import_check "refused without keyring" \
     "learning store not available; unlock your keyring and retry" "$tmp/fixture.vocab.tsv"
 import_check "bad header" "not a correctiond vocab v1 file" "$tmp/bad.vocab.tsv"
 import_check "missing file" "cannot open the file" "$tmp/missing-sikretongsalita.vocab.tsv"
+rc=0
+out="$("$bin" import 2>&1)" || rc=$?
+if [[ "$rc" == 64 && "$out" == "usage: engine import FILE" ]]; then
+    echo "PASS import usage: exit 64, \"$out\""
+else
+    echo "FAIL import usage: exit $rc, \"$out\""
+    status=1
+fi
 if grep -q sikretongsalita "$tmp/engine.stderr" "$trace" 2>/dev/null; then
     echo "FAIL import: a fixture word reached the engine's logs"; status=1
 fi

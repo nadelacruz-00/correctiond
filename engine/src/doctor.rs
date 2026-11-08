@@ -530,6 +530,23 @@ mod tests {
     }
 
     #[test]
+    fn parse_ext_reads_state_and_version() {
+        let owned = |v: Value<'_>| OwnedValue::try_from(v).unwrap();
+        assert_eq!(parse_ext(&HashMap::new()), None);
+        let map = HashMap::from([
+            ("state".to_string(), owned(Value::F64(1.0))),
+            ("version".to_string(), owned(Value::F64(7.0))),
+        ]);
+        assert_eq!(
+            parse_ext(&map),
+            Some(ExtInfo {
+                state: 1.0,
+                version: "7".into(),
+            })
+        );
+    }
+
+    #[test]
     fn exit_code_is_worst_status() {
         assert_eq!(exit_code(&[c("a", Status::Ok, "")]), 0);
         assert_eq!(

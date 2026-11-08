@@ -410,16 +410,22 @@ fn replay(
 
 /// Name, engine variant and OSK visibility. "osk" is the Qwerty variant
 /// with the on-screen keyboard up, so taps use the OSK geometry.
-const LAYOUTS: [(&str, LayoutId, bool); 3] = [
-    ("qwerty", LayoutId::Qwerty, false),
-    ("colemak", LayoutId::Colemak, false),
-    ("osk", LayoutId::Qwerty, true),
-];
+/// The "osk" row exists only with the `touch` feature.
+fn layouts() -> Vec<(&'static str, LayoutId, bool)> {
+    let mut rows = vec![
+        ("qwerty", LayoutId::Qwerty, false),
+        ("colemak", LayoutId::Colemak, false),
+    ];
+    if cfg!(feature = "touch") {
+        rows.push(("osk", LayoutId::Qwerty, true));
+    }
+    rows
+}
 
 /// Every layout x {lists_only, full}, as the output JSON.
 fn evaluate(dict: &Arc<Dictionary>, personal: &VocabBatch, corpus: &Corpus) -> String {
-    let mut layouts = Vec::new();
-    for (name, variant, osk) in LAYOUTS {
+    let mut rows = Vec::new();
+    for (name, variant, osk) in layouts() {
         let planted = plant(corpus, effective_layout(variant, osk));
         let mut modes = Vec::new();
         for full in [false, true] {
@@ -432,14 +438,14 @@ fn evaluate(dict: &Arc<Dictionary>, personal: &VocabBatch, corpus: &Corpus) -> S
             let key = if full { "full" } else { "lists_only" };
             modes.push(format!("\"{key}\": {}", mode_json(&t, full)));
         }
-        layouts.push(format!("\"{name}\": {{{}}}", modes.join(", ")));
+        rows.push(format!("\"{name}\": {{{}}}", modes.join(", ")));
     }
     format!(
         "{{\n  \"messages\": {},\n  \"scored_tokens\": {},\n  \"personal_words\": {},\n  \"layouts\": {{\n    {}\n  }}\n}}\n",
         corpus.messages.len(),
         corpus.scored(),
         personal.words.len(),
-        layouts.join(",\n    ")
+        rows.join(",\n    ")
     )
 }
 
@@ -588,7 +594,7 @@ world thing hello world thing hello world thing hello house
     fn fixture_rates_match_hand_computed_values() {
         let (_, v) = run_fixture();
         assert_eq!(v["messages"], 5);
-        for layout in ["qwerty", "colemak", "osk"] {
+        for (layout, _, _) in layouts() {
             for mode in ["lists_only", "full"] {
                 let m = &v["layouts"][layout][mode];
                 let ctx = format!("{layout}/{mode}");

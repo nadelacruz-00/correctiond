@@ -20,6 +20,12 @@ path = "src/main.rs"
 name = "replay"
 test = true
 
+[features]
+# On-screen keyboard geometry for touch typing. Without it the OSK flag is
+# ignored and every key is scored with the configured layout.
+default = ["touch"]
+touch = []
+
 [dependencies]
 corelib = { path = "../corelib" }
 # Without default-features = false, zbus 5 also pulls in async-io.

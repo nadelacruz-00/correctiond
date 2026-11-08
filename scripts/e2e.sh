@@ -118,6 +118,42 @@ if grep -q sikretongsalita "$tmp/engine.stderr" "$trace" 2>/dev/null; then
     echo "FAIL import: a fixture word reached the engine's logs"; status=1
 fi
 
+# `engine doctor` against the private bus and ibus-daemon. The component
+# file is generated into a temp dir with exec set to this binary. A unique
+# word is typed first; neither output may contain it.
+mkdir -p "$tmp/component"
+sed "s|<exec>[^<]*</exec>|<exec>$bin</exec>|" "$repo/data/correctiond.xml" \
+    >"$tmp/component/correctiond.xml"
+python3 -I -u "$client" teach-word || status=1
+rc=0
+out=$(IBUS_COMPONENT_PATH="$tmp/component" "$bin" doctor) || rc=$?
+rcj=0
+outj=$(IBUS_COMPONENT_PATH="$tmp/component" "$bin" doctor --json) || rcj=$?
+doctor_ok() { # label, rc, output, expected line
+    if [[ "$2" -le 2 ]] && grep -qF -- "$4" <<<"$3"; then
+        echo "PASS doctor $1: \"$4\" (exit $2)"
+    else
+        echo "FAIL doctor $1: missing \"$4\" or exit $2"; echo "$3" | sed 's/^/  doctor| /'
+        status=1
+    fi
+}
+doctor_ok "ibus" "$rc" "$out" "ibus: ok"
+doctor_ok "engine_running" "$rc" "$out" "engine_running: ok"
+doctor_ok "component" "$rc" "$out" "component: ok"
+doctor_ok "json" "$rcj" "$outj" '"key":"engine_running","status":"ok"'
+if grep -q zorblaxite <<<"$out$outj"; then
+    echo "FAIL doctor: a typed word reached the output"; status=1
+else
+    echo "PASS doctor: no typed word in text or --json output"
+fi
+rc=0
+err="$("$bin" doctor --bogus 2>&1)" || rc=$?
+if [[ "$rc" == 64 && "$err" == "usage: correctiond doctor [--json]" ]]; then
+    echo "PASS doctor usage: exit 64"
+else
+    echo "FAIL doctor usage: exit $rc, \"$err\""; status=1
+fi
+
 stop_engine() {
     kill -TERM "$epid"
     wait "$epid" || true

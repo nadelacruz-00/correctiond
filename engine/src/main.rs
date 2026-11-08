@@ -16,6 +16,7 @@
 
 mod config;
 mod control;
+mod doctor;
 mod ibus;
 mod keyring;
 mod persist;
@@ -192,8 +193,8 @@ fn main() -> ExitCode {
     let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
     let register = match dispatch(&args) {
         Dispatch::Import(rest) => return import_main(rest),
-        // Task 6 replaces this stub with `doctor::run(rest)`.
-        Dispatch::Doctor(_) | Dispatch::Usage => {
+        Dispatch::Doctor(rest) => return doctor::run(rest),
+        Dispatch::Usage => {
             eprintln!("{CLI_USAGE}");
             return ExitCode::from(EXIT_USAGE);
         }

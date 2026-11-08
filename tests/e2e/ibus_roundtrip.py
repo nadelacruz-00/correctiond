@@ -225,12 +225,22 @@ def taglish(case):
     finish(ic)
 
 
+def teach_word():
+    """Type a unique word three times, so doctor has something to leak."""
+    ic, holder = connect()
+    field = new_field(ic, holder, IBus.InputPurpose.FREE_FORM)
+    field.type("zorblaxite zorblaxite zorblaxite ")
+    finish(ic)
+
+
 def main():
     case = sys.argv[1] if len(sys.argv) > 1 else None
     if case is None:
         roundtrip()
     elif case in ("tl-absent", "tl-present"):
         taglish(case)
+    elif case == "teach-word":
+        teach_word()
     else:
         fail(f"unknown case {case!r}")
 

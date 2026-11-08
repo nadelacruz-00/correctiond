@@ -1,12 +1,18 @@
-# Build the .deb files and the extension zip, and publish a GitHub release
-# when a version tag is pushed:
+# Build the .deb, .rpm and portable tarball (x86_64 and arm64) plus the
+# extension zip. A version tag publishes a GitHub release with attestations:
 #
 #   git tag v0.1.0 && git push --tags
+#
+# workflow_dispatch and pull requests that touch the release paths only build
+# and upload workflow artifacts; they publish nothing.
 name: Release
 
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+  pull_request:
+    paths: [".github/workflows/release.yml", "engine/Cargo.toml", "scripts/install.sh"]
 
 permissions:
   contents: read
@@ -27,8 +33,9 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libssl-dev pkg-config dpkg-dev
+          sudo apt-get install -y libssl-dev pkg-config dpkg-dev rpm
       - name: Check the tag matches Cargo.toml
+        if: startsWith(github.ref, 'refs/tags/')
         run: |
           version=$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"]=="engine"))')
           if [ "v$version" != "$GITHUB_REF_NAME" ]; then
@@ -36,17 +43,38 @@ jobs:
             exit 1
           fi
       - run: cargo test --workspace --locked
-      - run: cargo install cargo-deb --locked
+      - run: cargo install cargo-deb --locked --version 3.8.0
+      - run: cargo install cargo-generate-rpm --locked --version 0.21.1
       # depends = "$auto": dpkg-shlibdeps adds the libssl runtime package.
       - run: cargo deb -p engine --locked
-      - name: Collect the .deb
+      # Requires stay automatic: auto-req adds libcrypto.so.3.
+      - run: cargo generate-rpm -p engine
+      - name: Collect the packages and the tarball
         run: |
+          set -euo pipefail
+          version=$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"]=="engine"))')
+          deb_arch=$(dpkg --print-architecture)
+          rpm_arch=$(uname -m)
           mkdir -p dist
-          cp target/debian/*.deb dist/
-          (cd dist && for f in *.deb; do sha256sum "$f" > "$f.sha256"; done)
+          cp target/debian/*.deb target/generate-rpm/*.rpm dist/
+          # Portable tarball: install.sh reads its payload from its own directory.
+          pkg="correctiond-${version}-${rpm_arch}-linux"
+          mkdir "$pkg"
+          cp target/release/engine data/correctiond.xml data/correctiond-wrapper.sh \
+            LICENSE-MIT LICENSE-APACHE data/ATTRIBUTION.md scripts/install.sh "$pkg/"
+          tar -czf "dist/$pkg.tar.gz" "$pkg"
+          # The wrapper must be listed in both packages.
+          dpkg-deb -c dist/*.deb | grep -q './usr/bin/correctiond$'
+          rpm -qlp dist/*.rpm | grep -qx /usr/bin/correctiond
+          # Version-free copies, one .sha256 per file (bare name in the line).
+          cp dist/*.deb "dist/correctiond_${deb_arch}.deb"
+          cp dist/*.rpm "dist/correctiond.${rpm_arch}.rpm"
+          cp "dist/$pkg.tar.gz" "dist/correctiond-${rpm_arch}-linux.tar.gz"
+          (cd dist && for f in *.deb *.rpm *.tar.gz; do sha256sum "$f" > "$f.sha256"; done)
+          ls -l dist
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: deb-${{ matrix.os }}
+          name: packages-${{ matrix.os }}
           path: dist/*
 
   extension:
@@ -67,15 +95,21 @@ jobs:
           path: dist/*.zip
 
   release:
+    if: startsWith(github.ref, 'refs/tags/')
     needs: [build, extension]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           path: dist
           merge-multiple: true
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/*
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}

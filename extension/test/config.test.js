@@ -58,6 +58,8 @@ const FIXTURE_MODEL = {
     allowlist: ['firefox', 'zen', 'org.gnome.TextEditor'],
     broken: ['org.example.Broken'],
     oskSource: 'correctiond:colemak',
+    modules: {touch: true},
+    touchExplicit: true,
     allowAnyCaller: false,
 };
 
@@ -195,6 +197,63 @@ test('unreadable files are refused, never guessed', () => {
     bad('auto_switch_osk = "no"\n', 'line 1', 'string for bool');
     bad('osk_source = true\n', 'line 1', 'bool for string');
     bad('allowlist = ["a", 1]\n', 'line 1', 'mixed array');
+});
+
+test('[modules] touch parses', () => {
+    const c = parseConfig('[modules]\ntouch = false\n').config;
+    eq(c.modules.touch, false, 'touch');
+    eq(c.touchExplicit, true, 'explicit');
+});
+
+test('no [modules] means null and not explicit', () => {
+    const c = parseConfig('allowlist = ["x"]\n').config;
+    eq(c.modules.touch, null, 'touch');
+    eq(c.touchExplicit, false, 'explicit');
+});
+
+test('save without the switch keeps the key absent', () => {
+    if (serializeConfig(parseConfig('allowlist = ["x"]\n').config).includes('touch'))
+        throw new Error('touch written');
+});
+
+test('a flipped switch writes the key', () => {
+    const c = parseConfig('allowlist = ["x"]\n').config;
+    c.modules.touch = true;
+    c.touchExplicit = true;
+    const out = serializeConfig(c);
+    const at = out.indexOf('[modules]\ntouch = true\n');
+    if (at < 0 || at > out.indexOf('[[languages]]'))
+        throw new Error(`bad output: ${out}`);
+});
+
+test('an explicit key survives saves', () => {
+    const c = parseConfig('[modules]\ntouch = false\n').config;
+    const d = parseConfig(serializeConfig(c)).config;
+    eq(d.modules.touch, false, 'touch');
+    eq(d.touchExplicit, true, 'explicit');
+});
+
+test('[modules] above osk_source is refused', () => {
+    // TOML puts osk_source inside [modules]. The engine ignores that stray
+    // key; this reader refuses the file so Settings stays read-only.
+    bad('[modules]\ntouch = true\nosk_source = "x"\n', "unknown [modules] setting 'osk_source'", 'stray key');
+});
+
+test('touch inside [[languages]] is refused', () => {
+    bad('[[languages]]\ncode = "en"\nlexicon = "x"\ntouch = true\n', "unknown language setting 'touch'", 'touch in language');
+});
+
+test('touch must be a bool', () => {
+    bad('[modules]\ntouch = "yes"\n', 'expected true or false', 'string touch');
+});
+
+test('missing languages use legacyLangs', () => {
+    const c = parseConfig('allowlist = ["x"]\n', {legacyLangs: ['tl']}).config;
+    eq(c.languages.map(l => l.code).join(','), 'en,tl', 'codes');
+});
+
+test('an invalid file is ok:false', () => {
+    eq(parseConfig('[[[', {legacyLangs: ['tl']}).ok, false, 'ok');
 });
 
 test('app ids', () => {

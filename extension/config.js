@@ -4,7 +4,8 @@
 // The parser accepts only the TOML the engine's Config uses: top-level
 // `allowlist`/`broken` (arrays of strings), `osk_source` (string),
 // `allow_any_caller` and the older `auto_switch_osk` (booleans), and
-// `[[languages]]` tables with `code` and `lexicon` strings. Anything else is refused with a line number instead of
+// `[modules]` with `touch` (boolean), and `[[languages]]` tables with `code`
+// and `lexicon` strings. Anything else is refused with a line number instead of
 // guessed at, so the window never overwrites a file it did not understand.
 // Keys left out keep the engine's defaults (engine/src/config.rs).
 
@@ -41,6 +42,10 @@ export function defaultConfig({legacyLangs = []} = {}) {
         broken: [],
         // IBus engine to switch to while GJS OSK is open; '' = no switch.
         oskSource: US_ENGINE,
+        // [modules] touch: null = not set in the file. touchExplicit is true
+        // only when the file had the key; only then is it written back.
+        modules: {touch: null},
+        touchExplicit: false,
         allowAnyCaller: false,
     };
 }
@@ -154,15 +159,16 @@ const TOP_KEYS = {
     auto_switch_osk: 'bool',
     allow_any_caller: 'bool',
 };
+const MODULE_KEYS = {touch: 'bool'};
 const LANGUAGE_KEYS = {code: 'string', lexicon: 'string'};
 
 /**
  * @param {string|null} text - the file's contents; null when it is missing
  * @returns {{ok: true, config: object} | {ok: false, error: string}}
  */
-export function parseConfig(text) {
+export function parseConfig(text, {legacyLangs = []} = {}) {
     try {
-        return {ok: true, config: parse(text ?? '')};
+        return {ok: true, config: parse(text ?? '', legacyLangs)};
     } catch (e) {
         if (e instanceof ParseError)
             return {ok: false, error: e.message};
@@ -170,8 +176,8 @@ export function parseConfig(text) {
     }
 }
 
-function parse(text) {
-    const config = defaultConfig();
+function parse(text, legacyLangs) {
+    const config = defaultConfig({legacyLangs});
     const toks = tokenize(text);
     let p = 0;
     const peek = () => toks[p];
@@ -190,7 +196,9 @@ function parse(text) {
 
     let languages = null; // set by the first [[languages]]
     let legacyAutoSwitch = null;
-    let table = null; // the [[languages]] entry being filled, or null at top level
+    let table = null; // the [[languages]] entry being filled, or null
+    let inModules = false; // inside the [modules] table
+    let seenModules = false;
     const seenTop = new Set();
     const tables = [];
 
@@ -246,18 +254,40 @@ function parse(text) {
             if (name.value !== 'languages')
                 fail(t.line, `unknown table [[${name.value}]]`);
             languages ??= [];
+            inModules = false;
             table = {};
             tables.push({table, line: t.line});
             languages.push(table);
             continue;
         }
-        if (t.type === '[')
+        if (t.type === '[') {
+            const name = peek();
+            if (name.type === 'bare' && name.value === 'modules') {
+                next();
+                expect(']', ']');
+                endOfLine();
+                if (seenModules)
+                    fail(t.line, '[modules] appears twice');
+                seenModules = true;
+                inModules = true;
+                table = null;
+                continue;
+            }
             fail(t.line, 'only [[languages]] tables are supported');
+        }
         if (t.type !== 'bare')
             fail(t.line, 'expected a setting name');
         expect('=', '=');
         const key = t.value;
-        if (table) {
+        if (inModules) {
+            const kind = MODULE_KEYS[key];
+            if (!kind)
+                fail(t.line, `unknown [modules] setting '${key}'`);
+            if (config.touchExplicit)
+                fail(t.line, `'${key}' is set twice`);
+            config.modules.touch = value(kind, t.line);
+            config.touchExplicit = true;
+        } else if (table) {
             const kind = LANGUAGE_KEYS[key];
             if (!kind)
                 fail(t.line, `unknown language setting '${key}'`);
@@ -324,7 +354,8 @@ function list(key, items) {
 
 /**
  * The whole file for `config`. Every key is written (so the file says what
- * the engine does), except allow_any_caller, which only appears when on.
+ * the engine does), except allow_any_caller (only when on) and [modules]
+ * touch (only when the file set it: touchExplicit).
  */
 export function serializeConfig(config) {
     let s = '# correctiond settings, written by the Correctiond Companion preferences\n' +
@@ -347,6 +378,8 @@ export function serializeConfig(config) {
         s += '\n# Any session-bus client may use the control interface (testing only).\n' +
             'allow_any_caller = true\n';
     }
+    if (config.touchExplicit)
+        s += `\n[modules]\ntouch = ${config.modules.touch ? 'true' : 'false'}\n`;
     for (const l of config.languages)
         s += `\n[[languages]]\ncode = ${quote(l.code)}\nlexicon = ${quote(l.lexicon)}\n`;
     return s;

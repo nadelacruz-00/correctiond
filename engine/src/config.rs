@@ -306,6 +306,20 @@ mod tests {
         assert_eq!(c.broken, vec!["org.example.Broken"]);
         assert_eq!(c.osk_source.as_deref(), Some("correctiond:colemak"));
         assert!(!c.allow_any_caller);
+        assert_eq!(c.modules.touch, Some(true));
+    }
+
+    #[test]
+    fn modules_above_osk_source_matches_js() {
+        // The osk_source line sits inside [modules] (TOML table rules).
+        // extension/config.js refuses this file (Settings stays read-only);
+        // the engine ignores the stray key. Both agree it is not a top-level
+        // osk_source.
+        let text = "[modules]\ntouch = true\nosk_source = \"x\"\n";
+        let (r, _) = parse_report(text, Path::new("/home/u"));
+        let c = r.unwrap();
+        assert_eq!(c.modules.touch, Some(true));
+        assert_eq!(c.osk_source, None);
     }
 
     fn home_with_tl() -> tempfile::TempDir {

@@ -27,6 +27,98 @@ pub struct Config {
     /// open ("" = none). Read by the extension, not the engine.
     pub osk_source: Option<String>,
     pub allow_any_caller: bool,
+    pub modules: Modules,
+}
+
+/// Optional engine modules. `None` means the key is absent: the caller
+/// decides what that means (see the spec).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Modules {
+    pub touch: Option<bool>,
+}
+
+/// Where a config file stopped parsing. Both numbers start at 1. `key` stays
+/// `None`: toml 0.9 errors carry a span and a message but no key path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfigError {
+    pub line: usize,
+    pub column: usize,
+    pub key: Option<String>,
+}
+
+/// One-line, content-free description of a `ConfigError`.
+pub fn invalid_line(e: &ConfigError) -> String {
+    let key = match &e.key {
+        Some(k) => format!(" (key {k})"),
+        None => String::new(),
+    };
+    format!(
+        "correctiond: config.toml is invalid at line {}, column {}{key}; using defaults. Fix or delete ~/.config/correctiond/config.toml",
+        e.line, e.column
+    )
+}
+
+const TOUCH_WARNING: &str = "correctiond: config.toml modules.touch must be true or false; ignored";
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct RawModules {
+    touch: Option<toml::Value>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct RawConfig {
+    languages: Option<Vec<LangSpec>>,
+    allowlist: Option<Vec<String>>,
+    broken: Option<Vec<String>>,
+    auto_switch_osk: Option<bool>,
+    osk_source: Option<String>,
+    allow_any_caller: Option<bool>,
+    modules: RawModules,
+}
+
+/// Parses config text without logging. The `Vec` holds warning texts. On
+/// `Err` the caller uses `Config::default_for(home)`. Lexicon paths keep any
+/// `~`.
+pub fn parse_report(text: &str, home: &Path) -> (Result<Config, ConfigError>, Vec<&'static str>) {
+    let raw: RawConfig = match toml::from_str(text) {
+        Ok(r) => r,
+        Err(e) => {
+            let start = e.span().map_or(0, |s| s.start.min(text.len()));
+            let before = text.get(..start).unwrap_or("");
+            let line = before.matches('\n').count() + 1;
+            let column = before.rsplit('\n').next().map_or(0, |l| l.chars().count()) + 1;
+            return (
+                Err(ConfigError {
+                    line,
+                    column,
+                    key: None,
+                }),
+                Vec::new(),
+            );
+        }
+    };
+    let mut warnings = Vec::new();
+    let touch = match raw.modules.touch {
+        None => None,
+        Some(toml::Value::Boolean(b)) => Some(b),
+        Some(_) => {
+            warnings.push(TOUCH_WARNING);
+            None
+        }
+    };
+    let d = Config::default_for(home);
+    let c = Config {
+        languages: raw.languages.unwrap_or(d.languages),
+        allowlist: raw.allowlist.unwrap_or(d.allowlist),
+        broken: raw.broken.unwrap_or(d.broken),
+        auto_switch_osk: raw.auto_switch_osk.unwrap_or(d.auto_switch_osk),
+        osk_source: raw.osk_source.or(d.osk_source),
+        allow_any_caller: raw.allow_any_caller.unwrap_or(d.allow_any_caller),
+        modules: Modules { touch },
+    };
+    (Ok(c), warnings)
 }
 
 /// Apps that get autocorrect without being added by hand. Mirrored in
@@ -52,6 +144,7 @@ impl Default for Config {
             auto_switch_osk: true,
             osk_source: None,
             allow_any_caller: false,
+            modules: Modules::default(),
         }
     }
 }
@@ -87,10 +180,16 @@ impl Config {
     /// defaults. Lexicon paths come back with `~` expanded.
     pub fn load_from(path: &Path, home: &Path) -> Config {
         let mut c = match std::fs::read_to_string(path) {
-            Ok(text) => toml::from_str(&text).unwrap_or_else(|_| {
-                eprintln!("correctiond: config.toml is invalid, using defaults");
-                Config::default_for(home)
-            }),
+            Ok(text) => {
+                let (parsed, warnings) = parse_report(&text, home);
+                for w in warnings {
+                    eprintln!("{w}");
+                }
+                parsed.unwrap_or_else(|e| {
+                    eprintln!("{}", invalid_line(&e));
+                    Config::default_for(home)
+                })
+            }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Config::default_for(home),
             Err(_) => {
                 eprintln!("correctiond: config.toml is unreadable, using defaults");
@@ -207,6 +306,85 @@ mod tests {
         assert_eq!(c.broken, vec!["org.example.Broken"]);
         assert_eq!(c.osk_source.as_deref(), Some("correctiond:colemak"));
         assert!(!c.allow_any_caller);
+    }
+
+    fn home_with_tl() -> tempfile::TempDir {
+        let home = tempfile::tempdir().unwrap();
+        let lex = home.path().join(".local/share/correctiond/lexicons");
+        std::fs::create_dir_all(&lex).unwrap();
+        std::fs::write(lex.join("tl.txt"), "a\t1\n").unwrap();
+        home
+    }
+
+    fn codes(c: &Config) -> Vec<&str> {
+        c.languages.iter().map(|l| l.code.as_str()).collect()
+    }
+
+    #[test]
+    fn missing_languages_uses_legacy_rule() {
+        let home = home_with_tl();
+        let p = home.path().join("config.toml");
+        std::fs::write(&p, "allowlist = [\"x\"]\n").unwrap();
+        let c = Config::load_from(&p, home.path());
+        assert_eq!(codes(&c), ["en", "tl"]);
+        assert_eq!(c.allowlist, ["x"]);
+    }
+
+    #[test]
+    fn invalid_file_uses_default_for() {
+        let home = home_with_tl();
+        let p = home.path().join("config.toml");
+        std::fs::write(&p, "languages = 3\n[[[").unwrap();
+        assert_eq!(codes(&Config::load_from(&p, home.path())), ["en", "tl"]);
+    }
+
+    #[test]
+    fn unreadable_file_uses_default_for() {
+        let home = home_with_tl();
+        let dir = home.path().join("adir");
+        std::fs::create_dir(&dir).unwrap();
+        assert_eq!(codes(&Config::load_from(&dir, home.path())), ["en", "tl"]);
+    }
+
+    #[test]
+    fn touch_true_false_and_absent() {
+        let home = Path::new("/home/u");
+        let t = |s: &str| parse_report(s, home).0.unwrap().modules.touch;
+        assert_eq!(t("[modules]\ntouch = true"), Some(true));
+        assert_eq!(t("[modules]\ntouch = false"), Some(false));
+        assert_eq!(t("allowlist = []"), None);
+    }
+
+    #[test]
+    fn touch_wrong_type_is_ignored() {
+        let (r, w) = parse_report(
+            "allowlist = [\"x\"]\n[modules]\ntouch = \"yes\"",
+            Path::new("/home/u"),
+        );
+        let c = r.unwrap();
+        assert_eq!(c.modules.touch, None);
+        assert_eq!(c.allowlist, ["x"]);
+        assert_eq!(
+            w,
+            ["correctiond: config.toml modules.touch must be true or false; ignored"]
+        );
+    }
+
+    const BAD: &str = "allowlist = [\"a\"]\nbroken = 3\n";
+
+    #[test]
+    fn error_position_comes_from_span() {
+        let e = parse_report(BAD, Path::new("/home/u")).0.unwrap_err();
+        assert_eq!((e.line, e.column), (2, 10));
+    }
+
+    #[test]
+    fn error_text_has_no_snippet() {
+        let e = parse_report(BAD, Path::new("/home/u")).0.unwrap_err();
+        let s = invalid_line(&e);
+        assert!(s.starts_with("correctiond: config.toml is invalid at line 2, column "));
+        assert!(s.ends_with("; using defaults. Fix or delete ~/.config/correctiond/config.toml"));
+        assert!(!s.contains("broken = 3"));
     }
 
     #[test]

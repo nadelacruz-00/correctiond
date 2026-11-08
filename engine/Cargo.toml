@@ -40,10 +40,10 @@ oo7 = { version = "0.6", default-features = false, features = ["tokio", "openssl
 # Plain `async fn` in a trait does not give Send futures, which tokio::spawn needs.
 async-trait = "0.1"
 zeroize = "1"
+serde_json = "1"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["test-util"] }
-serde_json = "1"
 tempfile = "3"
 # Fault injection in the persistence tests (a second connection adds a
 # failing trigger). Same version and feature as corelib, so nothing new is

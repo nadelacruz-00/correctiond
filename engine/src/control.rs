@@ -711,7 +711,7 @@ mod tests {
         assert_eq!(c.ctx(FREE_FORM, 0).wm_class, None);
         assert_eq!(c.mode(FREE_FORM, 0), Mode::Observe);
         // An app that is not allowlisted only observes as well.
-        c.set_focused_app("org.gnome.TextEditor");
+        c.set_focused_app("org.example.Other");
         assert_eq!(c.mode(FREE_FORM, 0), Mode::Observe);
     }
 

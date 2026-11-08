@@ -5,8 +5,8 @@
 correctiond is a local autocorrect for GNOME on Wayland. It is an IBus input
 engine written in Rust: it watches what you type, and when a word ends with a
 space or punctuation it silently replaces a likely typo, the way a phone
-keyboard does. It knows which keyboard layout you type on (Colemak or US
-QWERTY, or GJS OSK's on-screen keys), learns your own words so it stops
+keyboard does. It knows which keyboard layout you type on (US QWERTY,
+Colemak, or GJS OSK's on-screen keys), learns your own words so it stops
 "fixing" them, and backs off for good when you undo a fix. A small GNOME Shell
 extension tells it which app has focus and adds a Quick Settings menu and a
 Settings window.
@@ -24,9 +24,9 @@ keyring.
 ## Features
 
 - Silent correction at word boundaries; no popups or suggestion lists.
-- Two input sources: `correctiond:colemak` and `correctiond:us`. Typo costs
-  follow the physical key layout, and switch to on-screen keyboard geometry
-  while GJS OSK is open.
+- Two input sources: `correctiond:us` (US QWERTY) and `correctiond:colemak`.
+  Typo costs follow the physical key layout, and switch to on-screen keyboard
+  geometry while GJS OSK is open.
 - One Backspace right after a fix undoes it, and that fix is never made again.
 - Learns your vocabulary, word pairs and your own slip patterns. A word is
   saved once it has been seen twice.
@@ -148,14 +148,17 @@ These steps install from source for the current user. Only step 3 needs sudo.
    rerun it after a rebuild; run `ibus restart` instead.
 
 4. **Add the input source.** Open GNOME Settings, Keyboard, Input Sources, add
-   an input source, choose English, then "English (Colemak, autocorrect)" or
-   "English (US, autocorrect)". They replace your plain Colemak or US layout,
-   and Super+Space switches between them as usual. To select one from a
-   terminal for a quick test:
+   an input source, choose English, then "English (US, autocorrect)". It
+   replaces your plain US layout, and Super+Space switches input sources as
+   usual. To select it from a terminal for a quick test:
 
    ```sh
-   ibus engine correctiond:colemak
+   ibus engine correctiond:us
    ```
+
+   **Other layouts.** Colemak typists choose "English (Colemak,
+   autocorrect)" instead, which replaces plain Colemak; from a terminal,
+   `ibus engine correctiond:colemak`.
 
 5. **Install the companion extension.**
 
@@ -333,7 +336,7 @@ Details and how to report a vulnerability: [SECURITY.md](SECURITY.md).
 ## Troubleshooting
 
 1. **Nothing is corrected at all.** Check that an autocorrect source is
-   active: `ibus engine` should print `correctiond:colemak` or `correctiond:us`.
+   active: `ibus engine` should print `correctiond:us` or `correctiond:colemak`.
    The Settings window's General page says "Not running" otherwise. Check
    `journalctl --user -b | grep correctiond` for startup errors.
 2. **The app is not in the allowlist.** The Quick Settings menu says "Not

@@ -21,6 +21,9 @@ broken = [
     "org.example.Broken",
 ]
 
+[modules]
+touch = true
+
 [[languages]]
 code = "en"
 lexicon = "builtin:en"

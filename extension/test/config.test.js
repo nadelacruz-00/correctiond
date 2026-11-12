@@ -12,7 +12,6 @@ import {
     validLangCode,
     MAX_LANGUAGES,
 } from '../config.js';
-import {parseOskSource} from '../lib.js';
 
 let failures = 0;
 let passed = 0;
@@ -150,9 +149,9 @@ test('serialize then parse round-trips', () => {
     }
 });
 
-test('the extension reads osk_source from written files', () => {
+test('osk_source survives serialize then parse', () => {
     for (const v of ['', 'correctiond:colemak', 'correctiond:us'])
-        eq(parseOskSource(serializeConfig({...FIXTURE_MODEL, oskSource: v})), v, JSON.stringify(v));
+        eq(parseConfig(serializeConfig({...FIXTURE_MODEL, oskSource: v})).config.oskSource, v, JSON.stringify(v));
 });
 
 test('older auto_switch_osk, and osk_source winning over it', () => {

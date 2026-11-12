@@ -11,7 +11,7 @@ set -euo pipefail
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 out="${1:-$repo/target/extension}"
 uuid=correctiond-companion@nadelacruz-00.github.io
-files=(metadata.json extension.js lib.js config.js prefs.js prefsWindow.js wordsPage.js LICENSE-MIT LICENSE-APACHE)
+files=(metadata.json extension.js lib.js config.js osk.js prefs.js prefsWindow.js wordsPage.js LICENSE-MIT LICENSE-APACHE)
 
 grep -q "\"uuid\": \"$uuid\"" "$repo/extension/metadata.json"
 mkdir -p "$out"
@@ -22,6 +22,7 @@ zip -q -j -X "$zip" \
     "$repo/extension/extension.js" \
     "$repo/extension/lib.js" \
     "$repo/extension/config.js" \
+    "$repo/extension/osk.js" \
     "$repo/extension/prefs.js" \
     "$repo/extension/prefsWindow.js" \
     "$repo/extension/wordsPage.js" \

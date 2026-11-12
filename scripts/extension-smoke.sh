@@ -968,8 +968,8 @@ check v010 "menu open calls GetStatus" between v010 menu-open end "GetStatus"
 check v010 "menu open calls RecentWords" between v010 menu-open end "RecentWords"
 check v010 "the menu shows the full state" eval_ok v010 v010-menu
 check v010 "every Eval succeeded" bash -c "! grep -q '^EVAL-FAILED' '$out/v010/calls.log'"
-check v010 "no UnknownMethod in the shell log or the calls" \
-    bash -c "! grep -qi 'UnknownMethod' '$out/v010/shell.log' '$out/v010/calls.log'"
+check v010 "the extension logs no missing method (older-engine fallback, UnknownMethod, failed call)" \
+    bash -c "! grep -qE 'an older version|UnknownMethod|correctiond-companion: .* failed' '$out/v010/shell.log'"
 check v010 "no stack trace through the extension" no_trace v010
 
 run_one e1 0 997 '' e1

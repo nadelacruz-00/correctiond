@@ -29,6 +29,17 @@ import {
     matchesSearch,
     lastUsedText,
     PendingForget,
+    GJS_OSK_UUID,
+    effectiveTouch,
+    touchAfterRead,
+    gjsOskInstalledIn,
+    componentDirs,
+    componentInstalledIn,
+    SETUP_WAIT_MS,
+    setupState,
+    SETUP_TEXT,
+    correctsInLine,
+    isCorrectiondSource,
 } from '../lib.js';
 
 let failures = 0;
@@ -425,6 +436,110 @@ test('PendingForget: add, take, undo', () => {
     p.add(['x']);
     eq(p.undo(), ['x'], 'undo');
     eq(p.size, 0, 'cleared');
+});
+
+// --- touch module and first-run helpers ---
+
+function tmpDir() {
+    return GLib.dir_make_tmp('lib-test-XXXXXX');
+}
+const isDir = p => GLib.file_test(p, GLib.FileTest.IS_DIR);
+const isFile = p => GLib.file_test(p, GLib.FileTest.IS_REGULAR);
+
+test('effectiveTouch: explicit value wins, else installed', () => {
+    eq(effectiveTouch(null, true), true, 'null+installed');
+    eq(effectiveTouch(null, false), false, 'null+not');
+    eq(effectiveTouch(false, true), false, 'explicit false');
+    eq(effectiveTouch(true, false), true, 'explicit true');
+});
+
+test('touchAfterRead: missing, invalid and ok reads', () => {
+    eq(touchAfterRead({kind: 'missing'}, null, true), true, 'missing+installed');
+    eq(touchAfterRead({kind: 'missing'}, true, false), false, 'missing+not');
+    eq(touchAfterRead({kind: 'invalid'}, true, false), true, 'invalid keeps current');
+    eq(touchAfterRead({kind: 'invalid'}, null, true), true, 'invalid at enable uses installed');
+    eq(touchAfterRead({kind: 'invalid'}, null, false), false, 'invalid at enable, not installed');
+    eq(touchAfterRead({kind: 'ok', touch: false}, null, true), false, 'ok false');
+    eq(touchAfterRead({kind: 'ok', touch: null}, null, true), true, 'ok null derives');
+});
+
+test('gjsOskInstalledIn: finds the extension directory', () => {
+    eq(GJS_OSK_UUID, 'gjsosk@vishram1123.com', 'uuid');
+    const base = tmpDir();
+    const other = tmpDir();
+    GLib.mkdir_with_parents(`${base}/gnome-shell/extensions/${GJS_OSK_UUID}`, 0o755);
+    eq(gjsOskInstalledIn([other, base], isDir), true, 'present');
+    eq(gjsOskInstalledIn([other], isDir), false, 'absent');
+    eq(gjsOskInstalledIn([], isDir), false, 'no dirs');
+});
+
+test('componentDirs: system dir plus non-empty path entries', () => {
+    eq(componentDirs(null), ['/usr/share/ibus/component'], 'null');
+    eq(componentDirs(':/opt/x:'), ['/usr/share/ibus/component', '/opt/x'], 'colons');
+});
+
+test('componentInstalledIn: finds correctiond.xml', () => {
+    const a = tmpDir();
+    const b = tmpDir();
+    GLib.file_set_contents(`${b}/correctiond.xml`, '<component/>');
+    eq(componentInstalledIn([a, b], isFile), true, 'present');
+    eq(componentInstalledIn([a], isFile), false, 'absent');
+    eq(componentInstalledIn([], isFile), false, 'none');
+});
+
+test('setupState covers every input combination', () => {
+    eq(SETUP_WAIT_MS, 5000, 'wait');
+    for (let i = 0; i < 32; i++) {
+        const inp = {
+            componentInstalled: !!(i & 1),
+            sourceConfigured: !!(i & 2),
+            sourceCurrent: !!(i & 4),
+            engineOwned: !!(i & 8),
+            ownerWaitExpired: !!(i & 16),
+        };
+        let want;
+        if (inp.engineOwned) want = null;
+        else if (!inp.componentInstalled) want = 'no-engine';
+        else if (!inp.sourceConfigured) want = 'no-source';
+        else if (!inp.sourceCurrent) want = 'paused';
+        else if (!inp.ownerWaitExpired) want = 'starting';
+        else want = 'failed';
+        eq(setupState(inp), want, JSON.stringify(inp));
+    }
+    const base = {componentInstalled: true, sourceConfigured: true, sourceCurrent: true,
+        engineOwned: false, ownerWaitExpired: false};
+    eq(setupState({...base, engineOwned: true}), null, 'owned');
+    eq(setupState({...base, componentInstalled: false}), 'no-engine', 'no-engine');
+    eq(setupState({...base, sourceConfigured: false}), 'no-source', 'no-source');
+    eq(setupState({...base, sourceCurrent: false, ownerWaitExpired: true}), 'paused', 'paused');
+    eq(setupState(base), 'starting', 'starting');
+    eq(setupState({...base, ownerWaitExpired: true}), 'failed', 'failed');
+});
+
+test('setup texts are the spec strings', () => {
+    const quick = {
+        'no-engine': 'Install the correctiond engine package',
+        'no-source': "Add 'English (US, autocorrect)' as an input source. If it isn't listed, run `ibus restart` first",
+        'paused': 'Paused: another input source is active (Super+Space to switch)',
+        'starting': 'Starting…',
+        'failed': "The autocorrect engine isn't reachable. Run `ibus restart`; if it still fails, see `journalctl --user -b | grep correctiond`",
+    };
+    const settings = {
+        'no-engine': 'Install the correctiond engine package',
+        'no-source': "Add 'English (US, autocorrect)' as an input source. If it isn't listed, press Restart below.",
+        'paused': 'Paused: another input source is active (Super+Space to switch)',
+        'starting': 'Starting…',
+        'failed': "The autocorrect engine isn't reachable. Press Restart below; if it still fails, see `journalctl --user -b | grep correctiond`",
+    };
+    eq(SETUP_TEXT.quick, quick, 'quick');
+    eq(SETUP_TEXT.settings, settings, 'settings');
+    eq(correctsInLine(['Kate', 'Firefox']), 'Corrects in: Kate, Firefox. Add apps on the Apps page.', 'extra line');
+});
+
+test('isCorrectiondSource', () => {
+    eq(isCorrectiondSource(['ibus', 'correctiond:us']), true, 'ours');
+    eq(isCorrectiondSource(['ibus', 'other']), false, 'other ibus');
+    eq(isCorrectiondSource(['xkb', 'correctiond:us']), false, 'xkb');
 });
 
 print(`${passed} passed, ${failures} failed`);

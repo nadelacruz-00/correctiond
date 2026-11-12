@@ -17,6 +17,7 @@ import {
     serializeConfig,
     validLangCode,
 } from './config.js';
+import {effectiveTouch, gjsOskInstalledIn} from './lib.js';
 import {addWordsPage} from './wordsPage.js';
 
 const BUS_NAME = 'org.nadelacruz.Correctiond1';
@@ -80,9 +81,28 @@ export function loadReport(path) {
     }
 }
 
+/** True when the GJS OSK extension is installed in a user or system data dir. */
+export function gjsOskOnDisk() {
+    return gjsOskInstalledIn([GLib.get_user_data_dir(), ...GLib.get_system_data_dirs()],
+        p => GLib.file_test(p, GLib.FileTest.IS_DIR));
+}
+
+/**
+ * The active input source: `mru-sources[0]` (GNOME 50 ignores `current`),
+ * else `sources[0]`, else null.
+ * @param {Gio.Settings} settings org.gnome.desktop.input-sources
+ * @returns {[string, string]|null}
+ */
+export function currentSource(settings) {
+    const mru = settings.get_value('mru-sources').deepUnpack();
+    if (mru.length > 0)
+        return mru[0];
+    return settings.get_value('sources').deepUnpack()[0] ?? null;
+}
+
 /**
  * The layout whose numbers the Learning page leads with: the active input
- * source mapped through LAYOUT_BY_SOURCE (correctiond:colemak -> colemak,
+ * source (mru-sources[0]) mapped through LAYOUT_BY_SOURCE (correctiond:colemak -> colemak,
  * correctiond:us -> qwerty), else qwerty. Any failure reading GSettings
  * (schema missing, odd values) also gives qwerty.
  */
@@ -92,8 +112,7 @@ export function currentLayout() {
         if (!src?.lookup('org.gnome.desktop.input-sources', true))
             return DEFAULT_LAYOUT;
         const settings = new Gio.Settings({schema_id: 'org.gnome.desktop.input-sources'});
-        const sources = settings.get_value('sources').deepUnpack();
-        const entry = sources[settings.get_uint('current')];
+        const entry = currentSource(settings);
         return LAYOUT_BY_SOURCE[entry?.[1]] ?? DEFAULT_LAYOUT;
     } catch (e) {
         return DEFAULT_LAYOUT;
@@ -158,7 +177,7 @@ function installedApps() {
  *
  * @param {Adw.PreferencesWindow} window
  * @param {{configPath?: string, restartArgv?: string[], apps?: object[], reportPath?: string,
- *   layout?: string, dataDir?: string, companionCall?: (callback: (err: Error|null) => void) => void,
+ *   layout?: string, gjsOskInstalled?: boolean, dataDir?: string, companionCall?: (callback: (err: Error|null) => void) => void,
  *   wordsCalls?: object}} opts - wordsCalls: see addWordsPage in wordsPage.js
  */
 export function fillWindow(window, opts = {}) {
@@ -170,6 +189,7 @@ export function fillWindow(window, opts = {}) {
     // --- model and file ---
 
     let text = null;
+    const gjsOskInstalled = opts.gjsOskInstalled ?? gjsOskOnDisk();
     try {
         const [, bytes] = GLib.file_get_contents(configPath);
         text = new TextDecoder().decode(bytes);
@@ -257,6 +277,16 @@ export function fillWindow(window, opts = {}) {
             model.oskSource = engine;
             // The extension rereads this each time the OSK opens.
             return save({needsRestart: false});
+        },
+        setTouch(on) {
+            if (readOnly)
+                return false;
+            model.modules.touch = on;
+            model.touchExplicit = true;
+            // The Shell extension watches the file and applies it live.
+            const ok = save({needsRestart: false});
+            updateOsk();
+            return ok;
         },
         addLanguage(code, lexicon) {
             if (readOnly)
@@ -376,8 +406,11 @@ export function fillWindow(window, opts = {}) {
     restartRow.activatable_widget = restartBtn;
     statusGroup.add(restartRow);
 
+    let updateOsk = () => {}; // set with the On-screen keyboard group below
+
     let wordsLearned = null; // from GetStats; null while the engine is not running
     const refreshStatus = () => {
+        updateOsk();
         Gio.DBus.session.call(BUS_NAME, OBJECT_PATH, BUS_NAME, 'GetStats', null,
             new GLib.VariantType('(s)'), Gio.DBusCallFlags.NO_AUTO_START, 2000, null,
             (conn, res) => {
@@ -402,6 +435,16 @@ export function fillWindow(window, opts = {}) {
 
     const oskGroup = new Adw.PreferencesGroup({title: 'On-screen keyboard'});
     general.add(oskGroup);
+    const touchRow = new Adw.SwitchRow({
+        title: 'On-screen keyboard support',
+        subtitle: "For the GJS OSK extension. GNOME's built-in keyboard isn't supported yet.",
+        active: effectiveTouch(model?.modules.touch ?? null, gjsOskInstalled),
+        sensitive: !readOnly,
+        use_markup: false,
+    });
+    oskGroup.add(touchRow);
+    controller.touchRow = touchRow;
+    controller.oskGroup = oskGroup;
     const oskChoices = OSK_CHOICES.slice();
     const current = model?.oskSource ?? 'correctiond:us';
     if (!oskChoices.some(c => c.engine === current))
@@ -418,6 +461,16 @@ export function fillWindow(window, opts = {}) {
     oskRow.connect('notify::selected', () => controller.setOskSource(oskChoices[oskRow.selected].engine));
     oskGroup.add(oskRow);
     controller.oskRow = oskRow;
+    const oskRowSubtitle = oskRow.subtitle;
+    updateOsk = () => {
+        const touchOn = effectiveTouch(model?.modules.touch ?? null, gjsOskInstalled);
+        oskGroup.visible = gjsOskInstalled || touchOn;
+        oskGroup.description = touchOn && !gjsOskInstalled ? 'GJS OSK is not installed' : '';
+        oskRow.sensitive = !readOnly && touchOn;
+        oskRow.subtitle = touchOn ? oskRowSubtitle : 'Turn on on-screen keyboard support first';
+    };
+    updateOsk();
+    touchRow.connect('notify::active', () => controller.setTouch(touchRow.active));
 
     const fileGroup = new Adw.PreferencesGroup({
         title: 'Settings file',

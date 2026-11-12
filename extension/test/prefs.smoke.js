@@ -11,7 +11,7 @@ import GObject from 'gi://GObject';
 import Gtk from 'gi://Gtk?version=4.0';
 import System from 'system';
 
-import {fillWindow, fmtRate, legacyLangs, lexiconStatus, loadReport} from '../prefsWindow.js';
+import {currentSource, fillWindow, fmtRate, legacyLangs, lexiconStatus, loadReport} from '../prefsWindow.js';
 import {DEFAULT_ALLOWLIST, parseConfig} from '../config.js';
 import {SORTS} from '../lib.js';
 import {rowSubtitle} from '../wordsPage.js';
@@ -102,6 +102,50 @@ ctl = fillWindow(newWindow(), {configPath: odd, restartArgv: ['true'], apps});
 check(ctl.readOnly && ctl.error.includes('typo_key'), 'unknown key makes it read-only');
 check(!ctl.addApp('allowlist', 'zen'), 'read-only refuses edits');
 check(read(odd) === 'allowlist = ["firefox"]\ntypo_key = true\n', 'read-only file untouched');
+
+// On-screen keyboard support switch, group visibility and mru-sources.
+{
+    const tpath = n => GLib.build_filenamev([dir, `touch-${n}.toml`]);
+    const fw = (n, extra) => fillWindow(newWindow(), {
+        configPath: tpath(n), restartArgv: ['true'], apps, dataDir: noData, ...extra,
+    });
+    let t = fw('a', {gjsOskInstalled: true});
+    check(t.touchRow.active === true && t.oskGroup.visible === true, 'touch switch shows the derived value (installed)');
+    check(t.touchRow.title === 'On-screen keyboard support', 'touch switch title');
+    check(t.touchRow.subtitle === "For the GJS OSK extension. GNOME's built-in keyboard isn't supported yet.",
+        'touch switch subtitle');
+    t = fw('b', {gjsOskInstalled: false});
+    check(t.touchRow.active === false && t.oskGroup.visible === false, 'group hidden: not installed and touch off');
+    check(!GLib.file_test(tpath('b'), GLib.FileTest.EXISTS), 'building the window writes nothing');
+
+    GLib.file_set_contents(tpath('c'), '[modules]\ntouch = true\n');
+    t = fw('c', {gjsOskInstalled: false});
+    check(t.oskGroup.visible === true && t.oskGroup.description === 'GJS OSK is not installed',
+        'group visible when touch is explicitly on without gjs-osk');
+    check(t.touchRow.active === true, 'explicit touch on shows active');
+
+    t = fw('d', {gjsOskInstalled: true});
+    check(t.oskRow.sensitive === true, 'layout row sensitive while on');
+    t.touchRow.active = false; // the widget path
+    check(read(tpath('d')).includes('touch = false'), 'flipping the switch writes the key');
+    check(t.banners.every(b => !b.revealed), 'flipping the switch shows no restart banner');
+    check(t.oskRow.sensitive === false && t.oskRow.subtitle === 'Turn on on-screen keyboard support first',
+        'layout row insensitive while off');
+    t.touchRow.active = true;
+    check(read(tpath('d')).includes('touch = true') && t.oskRow.sensitive === true, 'switching back on');
+
+    t = fw('e', {gjsOskInstalled: true});
+    check(t.addApp('allowlist', 'org.example.Notes'), 'add app with touch absent');
+    check(!read(tpath('e')).includes('touch'), 'saving another setting keeps touch absent');
+}
+{
+    const stub = data => ({get_value: k => ({deepUnpack: () => data[k]})});
+    check(currentSource(stub({'mru-sources': [['ibus', 'b'], ['ibus', 'c']], sources: [['ibus', 'a']]}))?.join() === 'ibus,b',
+        'currentSource uses mru-sources first');
+    check(currentSource(stub({'mru-sources': [], sources: [['ibus', 'a'], ['ibus', 'z']]}))?.join() === 'ibus,a',
+        'currentSource falls back to sources[0]');
+    check(currentSource(stub({'mru-sources': [], sources: []})) === null, 'currentSource is null with none');
+}
 
 // Lexicon status.
 check(lexiconStatus('builtin:en').ok, 'builtin ok');

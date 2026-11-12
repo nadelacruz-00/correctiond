@@ -80,7 +80,7 @@ flowchart LR
     store -->|write-behind| persist
     persist -->|encrypted pages| db
     persist -->|store key| keyring
-    shell <-->|"focused app, OSK, enable, status, recent words, learned words"| ctl
+    shell <-->|"focused app, on-screen keyboard, enable, status, recent words, learned words"| ctl
     ctl --> pol
     prefs -->|"forget all, word access, list and forget words"| shell
     prefs -.->|GetStats| ctl
@@ -105,9 +105,9 @@ extension, may change the engine's settings or read learned words; see
 - GNOME Shell 50 on Wayland (the extension's `shell-version` is `["50"]`).
 - IBus, as GNOME's input method framework (the `ibus` command must be
   available).
-- A stable Rust toolchain with Cargo (CI uses the current stable release;
+- To build from source only: a stable Rust toolchain with Cargo (CI uses the current stable release;
   edition 2021).
-- Build libraries: SQLCipher is bundled and compiled from source, and links
+- To build from source only: build libraries. SQLCipher is bundled and compiled from source, and links
   against the system OpenSSL `libcrypto`. On Debian or Ubuntu:
   `sudo apt-get install -y libssl-dev pkg-config` (plus a C compiler).
 - A Secret Service keyring in the session, normally gnome-keyring with the
@@ -118,7 +118,140 @@ extension, may change the engine's settings or read learned words; see
 
 ## Install
 
+- The engine has no network code.
+- What it learns is kept in an encrypted database.
+- Your keystrokes are never written to a log.
+
+Details are in [SECURITY.md](SECURITY.md). Install the engine package for your
+distribution, then add the companion extension.
+
+### Install: Ubuntu
+
+For Ubuntu, Debian and distributions based on them. The engine needs OpenSSL 3
+(present on every GNOME 50 distro).
+
+```sh
+curl -LO https://github.com/nadelacruz-00/correctiond/releases/latest/download/correctiond_$(dpkg --print-architecture).deb
+sudo apt install ./correctiond_*.deb
+```
+
+### Install: Fedora
+
+For Fedora and openSUSE. The package requires OpenSSL 3, and `dnf` installs it
+for you.
+
+```sh
+curl -LO https://github.com/nadelacruz-00/correctiond/releases/latest/download/correctiond.$(uname -m).rpm
+sudo dnf install ./correctiond.$(uname -m).rpm
+```
+
+On an ostree system (Silverblue, Kinoite), use this command instead of `dnf`,
+then restart the system:
+
+```sh
+rpm-ostree install ./correctiond.$(uname -m).rpm
+```
+
+### Install: other
+
+For Arch and any other distribution, use the portable tarball. It needs
+OpenSSL 3 (present on every GNOME 50 distro). Download the tarball and its
+checksum file, check the checksum, then run the installer as root:
+
+```sh
+curl -LO https://github.com/nadelacruz-00/correctiond/releases/latest/download/correctiond-$(uname -m)-linux.tar.gz \
+     -LO https://github.com/nadelacruz-00/correctiond/releases/latest/download/correctiond-$(uname -m)-linux.tar.gz.sha256
+sha256sum -c correctiond-$(uname -m)-linux.tar.gz.sha256
+tar -xzf correctiond-$(uname -m)-linux.tar.gz
+cd correctiond-*-linux
+sudo ./install.sh
+```
+
+If `sha256sum` prints a failure, do not install. Download the files again. If
+the check fails a second time, report it on
+[GitHub Issues](https://github.com/nadelacruz-00/correctiond/issues).
+
+Optional, if you have the `gh` tool: check the build provenance of the file
+you downloaded.
+
+```sh
+gh attestation verify correctiond-$(uname -m)-linux.tar.gz -R nadelacruz-00/correctiond
+```
+
+`install.sh` never calls `sudo` and never asks questions. To install into
+another root directory, pass the variable explicitly, because `sudo` drops
+your environment: `sudo DESTDIR=/path/to/root ./install.sh`.
+
+### After the package is installed
+
+1. **Restart IBus.** Run this as your user, not with sudo:
+
+   ```sh
+   ibus restart
+   ```
+
+2. **Add the input source.** Open Settings, Keyboard, Add Input Source, then
+   TODO-VM. The entry is "English (US, autocorrect)". Colemak typists choose
+   the Colemak entry instead.
+
+3. **Install the companion extension.** Without it, the engine cannot tell
+   which app has focus, so it learns and never corrects. Use the install
+   button on the extension's page at extensions.gnome.org. To install without
+   a browser, run:
+
+   ```sh
+   gdbus call --session --dest org.gnome.Shell --object-path /org/gnome/Shell --method org.gnome.Shell.Extensions.InstallRemoteExtension correctiond-companion@nadelacruz-00.github.io
+   ```
+
+   Until the extensions.gnome.org listing is approved, install the
+   `correctiond-companion@nadelacruz-00.github.io.shell-extension.zip` file
+   from the [latest release](https://github.com/nadelacruz-00/correctiond/releases/latest).
+   Then log out and log in again, because GNOME Shell on Wayland loads new
+   extensions only at login:
+
+   ```sh
+   gnome-extensions install correctiond-companion@nadelacruz-00.github.io.shell-extension.zip
+   ```
+
+   After you log in, enable the extension in the Extensions app or run
+   `gnome-extensions enable correctiond-companion@nadelacruz-00.github.io`.
+
+### Check it works
+
+1. Open Firefox and click in a text field.
+2. Type `bulid ` (with a space at the end). It changes to `build `.
+3. Type `bulid ` again. Press Backspace right after the fix. It changes back
+   to `bulid `, and that fix is never made again.
+
+If nothing changes, go to [Troubleshooting](#troubleshooting).
+
+Your personal learning starts empty and grows as you type. To start with a
+vocabulary on day one, use [correctiond-import-cookbook](https://github.com/nadelacruz-00/correctiond-import-cookbook)
+(see Usage below).
+
+### Upgrading from a source install
+
+An older source install has an unowned
+`/usr/share/ibus/component/correctiond.xml` that points at your checkout, and
+the extension in
+`~/.local/share/gnome-shell/extensions/correctiond-companion@nadelacruz-00.github.io/`.
+
+- Install the package as described above. It replaces the component file in
+  place. If your package manager refuses because the file is not owned by a
+  package, run `sudo rm /usr/share/ibus/component/correctiond.xml` first and
+  install again.
+- The extensions.gnome.org install uses the same directory and replaces the
+  old extension in place.
+- Your settings, lexicons, `learn.db` and keyring item stay as they are. You
+  do not need to do anything for your learned words.
+
+### Build from source
+
 These steps install from source for the current user. Only step 3 needs sudo.
+They need the toolchain and libraries in Requirements above. Do not use them
+on a system that already has the package: `scripts/install-dev.sh` stops with
+an error if a package owns the component file. With a source build, run
+`target/release/engine doctor` instead of `correctiond doctor`.
 
 1. **Get the source.**
 
@@ -205,20 +338,31 @@ These steps install from source for the current user. Only step 3 needs sudo.
 
 ### Uninstall
 
-1. In the extension's Settings window, Learning page, choose "Forget all
-   learned words". This deletes the database and the keyring item.
-2. Remove the input sources in GNOME Settings, Keyboard.
-3. Remove the extension and the IBus component:
+First, in the extension's Settings window, Learning page, choose "Forget all
+learned words". This deletes the database and the keyring item. Then remove
+the engine for the way you installed it:
+
+| Installed with | Remove with |
+| --- | --- |
+| `.deb` | `sudo apt remove correctiond` |
+| `.rpm` | `sudo dnf remove correctiond` (ostree: `rpm-ostree uninstall correctiond`) |
+| Tarball | `sudo ./install.sh --uninstall` from the extracted directory |
+| Source build | `sudo rm /usr/share/ibus/component/correctiond.xml` |
+
+Then, for all formats:
+
+1. Remove the autocorrect input sources in GNOME Settings, Keyboard.
+2. Run `ibus restart` as your user.
+3. Remove the extension:
 
    ```sh
-   gnome-extensions disable correctiond-companion@nadelacruz-00.github.io
-   rm -r ~/.local/share/gnome-shell/extensions/correctiond-companion@nadelacruz-00.github.io
-   sudo rm /usr/share/ibus/component/correctiond.xml
-   ibus restart
+   gnome-extensions uninstall correctiond-companion@nadelacruz-00.github.io
    ```
 
 4. Optionally remove the remaining files: `~/.config/correctiond/` (settings)
-   and `~/.local/share/correctiond/` (lexicons and the import report).
+   and `~/.local/share/correctiond/` (lexicons and the import report). If the
+   keyring item "Correctiond learning store key" is still there, delete it in
+   your keyring app.
 
 ## Usage
 
@@ -335,26 +479,123 @@ Details and how to report a vulnerability: [SECURITY.md](SECURITY.md).
 
 ## Troubleshooting
 
-1. **Nothing is corrected at all.** Check that an autocorrect source is
+Questions and bugs: [GitHub Issues](https://github.com/nadelacruz-00/correctiond/issues).
+
+1. **Run `correctiond doctor`.** It prints one line per check
+   (`key: status value`) and the status is `ok`, `warn` or `fail`. It
+   reads only paths, ids and counts. It never prints typed or learned words.
+   Add `--json` for machine-readable output. For a source build, run
+   `target/release/engine doctor`.
+2. **Nothing is corrected at all.** Check that an autocorrect source is
    active: `ibus engine` should print `correctiond:us` or `correctiond:colemak`.
-   The Settings window's General page says "Not running" otherwise. Check
+   The Settings window's General page says why it is not running. Check
    `journalctl --user -b | grep correctiond` for startup errors.
-2. **The app is not in the allowlist.** The Quick Settings menu says "Not
+3. **The app is not in the allowlist.** The Quick Settings menu says "Not
    correcting in NAME (not in your app list)". Add it in Settings, Apps. The
    class must match the window: Firefox from the snap store is
    `firefox_firefox`, not `firefox`. "App not identified" means the extension
    is not running.
-3. **Colemak types as QWERTY.** GNOME Shell 50 ignores an engine's
+4. **Colemak types as QWERTY.** GNOME Shell 50 ignores an engine's
    `layout_variant`, so the shipped component declares `us+colemak` instead.
-   If you installed an older checkout, pull and rerun `scripts/install-dev.sh`.
-4. **Learning does not survive a restart.** The keyring is locked or missing:
+   If you installed an older version, update the package. For a source build,
+   pull and rerun `scripts/install-dev.sh`.
+5. **Learning does not survive a restart.** The keyring is locked or missing:
    the journal shows `correctiond: keyring locked; learning stays in memory`.
    Unlock the login keyring and switch windows; the store attaches within
    seconds. Until then, imports and forgetting words are refused.
-5. **Wrong letters with the on-screen keyboard.** Pick the layout your GJS OSK
+6. **Wrong letters with the on-screen keyboard.** Pick the layout your GJS OSK
    keyboard is drawn for in Settings, General, "Keyboard layout while GJS OSK
    is open", and add that input source in GNOME Settings. With per-window
    input sources turned on, the source is not switched.
+
+### Setup messages in Quick Settings and Settings
+
+Quick Settings and the Settings window show one of these messages when the
+engine is not ready. Each message has its own fix.
+
+### no-engine
+
+Message: "Install the correctiond engine package". The IBus component file is
+not installed. Install the package for your distribution (see
+[Install](#install)), then run `ibus restart` as your user.
+
+### no-source
+
+Message: "Add 'English (US, autocorrect)' as an input source. If it isn't
+listed, run `ibus restart` first" (Settings: "...press Restart below."). The
+engine is installed, but no autocorrect input source is set up. Run
+`ibus restart` as your user, then add the source in Settings, Keyboard.
+
+### paused
+
+Message: "Paused: another input source is active (Super+Space to switch)".
+This is not an error. IBus starts the engine only while an autocorrect source
+is selected. Press Super+Space to switch to it.
+
+### starting
+
+Message: "Starting…". The engine is starting. The message clears in a few
+seconds. If it changes to the next message, follow that fix.
+
+### failed
+
+Message: "The autocorrect engine isn't reachable. Run `ibus restart`; if it
+still fails, see `journalctl --user -b | grep correctiond`" (Settings: "Press
+Restart below; ..."). Run `ibus restart` as your user and run
+`correctiond doctor`. If it still fails, open the Report a problem link in
+Settings or file an issue on
+[GitHub Issues](https://github.com/nadelacruz-00/correctiond/issues/new?template=bug.yml).
+
+### Installer errors (`install.sh`)
+
+These errors come from the tarball installer. Each one ends with a code in
+square brackets.
+
+### E_USAGE
+
+`install.sh: run as root, or set DESTDIR [E_USAGE]` (exit 64), or the usage
+line after an unknown flag. Run it with `sudo ./install.sh`. The flags are
+`--uninstall`, `--dry-run`, `--force` and `--help`.
+
+### E_PKG_OWNED
+
+`<path> is owned by package <pkg> (<manager>). Upgrade with your package
+manager, or remove it first: <command>. [E_PKG_OWNED]` (exit 3). A `.deb`,
+`.rpm` or Arch package already owns the file. Upgrade with that package
+manager, or run the remove command the message prints. `--force` overrides the
+check. Do not use it unless you know why the package owns the file.
+
+### E_COPY
+
+`install.sh: could not write <path>` and then `[E_COPY]` (exit 4). The message
+lists the files it wrote. Check free disk space and that the target directory
+is writable. Running `install.sh` again is safe. `install.sh --uninstall`
+rolls back.
+
+### E_OSTREE
+
+``Use `rpm-ostree install ./correctiond-*.rpm` on this system [E_OSTREE]``
+(exit 5). The root file system is read-only. Install the `.rpm` with
+`rpm-ostree install ./correctiond.$(uname -m).rpm` and restart the system.
+
+### Package conflict on upgrade from source
+
+A source install leaves `/usr/share/ibus/component/correctiond.xml` that no
+package owns. If `dpkg` or `rpm` refuses to overwrite it, run
+`sudo rm /usr/share/ibus/component/correctiond.xml` and install the package
+again. Your settings and learned words are not touched.
+
+### Downgraded extension shows read-only Settings
+
+An older extension cannot read a `[modules]` block in
+`~/.config/correctiond/config.toml`. Only people who turned on the on-screen
+keyboard switch have that block. Open the file, delete the `[modules]` block
+(the heading and the lines under it) and save. Then reopen Settings.
+
+### After updating the extension from extensions.gnome.org
+
+The extensions.gnome.org site updates the extension by itself. Log out and log
+in once so GNOME Shell loads the new version.
 
 More: [docs/troubleshooting.md](docs/troubleshooting.md).
 

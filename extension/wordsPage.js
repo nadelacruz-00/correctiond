@@ -323,6 +323,10 @@ export function addWordsPage(window, opts = {}) {
     listModel.connect('items-changed', () => {
         countLabel.label = wordsText(listModel.get_n_items());
     });
+    // The empty text shows while no row is left in the list.
+    const syncEmpty = () => {
+        emptyLabel.visible = [...rows.keys()].every(w => leaving.has(w));
+    };
     const showList = on => {
         hiddenGroup.visible = !on;
         listGroup.visible = on;
@@ -330,6 +334,7 @@ export function addWordsPage(window, opts = {}) {
     // The hidden state with TEXT; a null BUTTONLABEL hides the button.
     const showStatus = (text, buttonLabel = SHOW_LABEL) => {
         statusLabel.label = text;
+        emptyLabel.visible = false;
         showButton.visible = buttonLabel !== null;
         if (buttonLabel !== null)
             showButton.label = buttonLabel;
@@ -361,6 +366,7 @@ export function addWordsPage(window, opts = {}) {
                 items.push(r.item);
         }
         store.splice(store.get_n_items(), 0, items);
+        syncEmpty();
     };
     const addToast = title => {
         const t = new Adw.Toast({title, timeout: 3, use_markup: false});
@@ -404,6 +410,7 @@ export function addWordsPage(window, opts = {}) {
                 leaving.delete(w);
                 rows.delete(w);
             }
+            syncEmpty();
         }, e => {
             if (torn)
                 return; // closed: the connection went before the reply
@@ -436,6 +443,7 @@ export function addWordsPage(window, opts = {}) {
         }
         removeFromStore(words);
         syncSelection();
+        syncEmpty();
         const size = pending.add(words);
         const title = size === 1 ? `Forgot ${words[0]}` : `Forgot ${size.toLocaleString()} words`;
         if (controller.toast) {
@@ -522,7 +530,7 @@ export function addWordsPage(window, opts = {}) {
         }
         fillStore();
         syncSelection();
-        emptyLabel.visible = rows.size === 0;
+        syncEmpty();
         showList(true);
     };
 

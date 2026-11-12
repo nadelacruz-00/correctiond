@@ -483,7 +483,6 @@ export function fillWindow(window, opts = {}) {
         css_classes: ['flat'],
     });
     refreshBtn.update_property([Gtk.AccessibleProperty.LABEL], ['Refresh status']);
-    controller.refreshButtonLabel = 'Refresh status';
     controller.refreshButton = refreshBtn;
     statusRow.add_suffix(getEngineLink);
     statusRow.add_suffix(keyboardButton);

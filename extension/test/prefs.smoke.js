@@ -193,16 +193,23 @@ check(read(odd) === 'allowlist = ["firefox"]\ntypo_key = true\n', 'read-only fil
     };
     const TEXT = state => SETUP_TEXT.settings[state];
 
+    // GTK 4 has no accessible-label getter, so record the update_property call.
+    const labelCalls = [];
+    const realUpdate = Gtk.Button.prototype.update_property;
+    Gtk.Button.prototype.update_property = function (props, values) {
+        labelCalls.push({icon: this.icon_name, props, values});
+        return realUpdate.call(this, props, values);
+    };
     let {c} = setupWin({componentProbe: () => false, inputSettings: fakeSettings([], [])});
+    Gtk.Button.prototype.update_property = realUpdate;
+    check(labelCalls.some(k => k.icon === 'view-refresh-symbolic' && k.props[0] === Gtk.AccessibleProperty.LABEL &&
+        k.values[0] === 'Refresh status'), `refresh icon accessible label set (${labelCalls.length} calls)`);
     check(c.statusRow.subtitle === TEXT('no-engine'), `no-engine subtitle: ${c.statusRow.subtitle}`);
     check(c.getEngineLink.visible && c.getEngineLink.label === 'Get the engine' &&
         c.getEngineLink.uri === 'https://github.com/nadelacruz-00/correctiond#install', 'no-engine: Get the engine link');
     check(c.restartRow.sensitive === false, 'no-engine: Restart row insensitive');
     check(c.refreshButton?.tooltip_text === 'Refresh status', 'refresh icon tooltip');
-    // GTK 4 has no getter for the accessible label (the AT context exposes
-    // only role and display), so the page records what it set.
-    check(c.refreshButton.get_at_context() !== null && c.refreshButtonLabel === 'Refresh status',
-        'refresh icon accessible label set');
+    check(c.refreshButton.get_at_context() !== null, 'refresh icon has an AT context');
     for (const k of ['getEngineLink', 'keyboardButton', 'reportLink'])
         check(typeof c[k].label === 'string' && c[k].label !== '', `${k} has a label`);
     check(!c.keyboardButton.visible && !c.reportLink.visible, 'no-engine: no other controls');
@@ -827,13 +834,36 @@ check(stuckWin.win.destroyCalls === 0 && stuckWin.win.closeCalls === 0, 'stuck f
     check(w.emptyLabel?.label ===
         'Nothing learned yet. correctiond learns as you type and fix words. To start with your own vocabulary, see correctiond-import-cookbook.',
     'words empty state text');
-    check(w.emptyLabel?.get_mapped() !== undefined && w.emptyLabel?.visible === true, 'words empty state visible');
+    check(w.emptyLabel?.visible === true, 'words empty state visible');
 }
 {
     const {w} = loaded(stubCalls());
     check(w.emptyLabel?.visible === false, 'words empty state hidden when words exist');
 }
-
+{
+    // Empty first, then words on reload: the label goes away.
+    let n = 0;
+    const s = stubCalls(() => ({listWords: () => Promise.resolve(n++ === 0 ? [] : stubRows())}));
+    const {w} = loaded(s);
+    check(w.emptyLabel.visible === true, 'reload: empty first');
+    w.reload();
+    spin(50);
+    check(w.emptyLabel.visible === false, 'reload with words hides the empty state');
+}
+{
+    const s = stubCalls(() => ({listWords: () => Promise.reject(remote(ACCESS_DENIED, 'x'))}));
+    const {w} = loaded(s);
+    check(w.emptyLabel.visible === false && w.statusLabel.label === 'Not allowed', 'rejection: no empty state, status shown');
+}
+{
+    // Forgetting the last words shows the empty state; Undo hides it again.
+    const s = stubCalls(() => ({listWords: () => Promise.resolve([stubRows()[0]])}));
+    const {w} = loaded(s);
+    w.forgetWord('kadto');
+    check(w.emptyLabel.visible === true, 'forgetting the last word shows the empty state');
+    w.undo();
+    check(w.emptyLabel.visible === false, 'undo hides the empty state');
+}
 
 void Gtk;
 GLib.spawn_command_line_sync(`rm -rf ${GLib.shell_quote(dir)}`);

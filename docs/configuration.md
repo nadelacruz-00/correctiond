@@ -94,9 +94,15 @@ window shows it as a switch on the General page.
   and prints one line to the journal (`correctiond: config.toml modules.touch
   must be true or false; ignored`). The Settings window then treats the file
   as one it does not understand and is read-only until you fix the line.
-- **`IBUS_COMPONENT_PATH`.** TODO-VM: whether this variable replaces the IBus
-  component directory or adds to it is not verified yet. It is filled in from
-  the VM tests (plan Task 20). Until then, do not rely on either behavior.
+- **`IBUS_COMPONENT_PATH`.** This variable replaces the IBus component
+  directory. It does not add to it. When it is set, IBus reads only the
+  directories in it, so list `/usr/share/ibus/component` too, or IBus loses
+  its other engines:
+  `IBUS_COMPONENT_PATH=$HOME/dev/component:/usr/share/ibus/component`.
+  `correctiond doctor` and the extension look for `correctiond.xml` in the
+  same directories. IBus may ignore the variable while its registry cache is
+  valid (Fedora ships one in `/var/cache/ibus`); `ibus-daemon --cache=refresh`
+  makes it read the directories again.
 - An older extension rejects the `[modules]` block and shows read-only
   Settings. See Troubleshooting in the [README](../README.md#downgraded-extension-shows-read-only-settings).
 

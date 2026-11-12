@@ -415,12 +415,18 @@ export function gjsOskInstalledIn(dataDirs, isDir) {
 }
 
 /**
+ * The directories IBus reads components from. When IBUS_COMPONENT_PATH is
+ * set (even to an empty value), IBus reads only its entries and not the
+ * system directory (ibus_registry_load in ibus src/ibusregistry.c).
+ * Mirrors component_dirs in engine/src/doctor.rs.
+ *
  * @param {string|null} ibusComponentPath colon-separated IBUS_COMPONENT_PATH
  * @returns {string[]}
  */
 export function componentDirs(ibusComponentPath) {
-    const extra = (ibusComponentPath ?? '').split(':').filter(e => e !== '');
-    return ['/usr/share/ibus/component', ...extra];
+    if (ibusComponentPath === null || ibusComponentPath === undefined)
+        return ['/usr/share/ibus/component'];
+    return ibusComponentPath.split(':').filter(e => e !== '');
 }
 
 /**

@@ -114,16 +114,16 @@ fn tilde(path: &Path, home: &Path) -> String {
     }
 }
 
+/// The directories IBus reads components from. When `IBUS_COMPONENT_PATH`
+/// is set (even to an empty value), IBus reads only its entries and not the
+/// system directory (`ibus_registry_load` in ibus `src/ibusregistry.c`).
 fn component_dirs(env: Option<&OsStr>) -> Vec<PathBuf> {
-    let mut dirs = vec![PathBuf::from(SYSTEM_COMPONENT_DIR)];
-    if let Some(e) = env {
-        dirs.extend(
-            std::env::split_paths(e)
-                .filter(|p| !p.as_os_str().is_empty())
-                .collect::<Vec<_>>(),
-        );
+    match env {
+        None => vec![PathBuf::from(SYSTEM_COMPONENT_DIR)],
+        Some(e) => std::env::split_paths(e)
+            .filter(|p| !p.as_os_str().is_empty())
+            .collect(),
     }
-    dirs
 }
 
 /// GLib's defaults: the user data dir, then `XDG_DATA_DIRS`.
@@ -586,12 +586,24 @@ mod tests {
     fn component_dirs_skip_empty_entries() {
         assert_eq!(
             component_dirs(Some(OsStr::new(":/opt/x:"))),
+            vec![PathBuf::from("/opt/x")]
+        );
+        assert_eq!(
+            component_dirs(None),
+            vec![PathBuf::from("/usr/share/ibus/component")]
+        );
+    }
+
+    #[test]
+    fn component_dirs_env_replaces_the_system_dir() {
+        assert_eq!(
+            component_dirs(Some(OsStr::new("/opt/x:/usr/share/ibus/component"))),
             vec![
-                PathBuf::from("/usr/share/ibus/component"),
-                PathBuf::from("/opt/x")
+                PathBuf::from("/opt/x"),
+                PathBuf::from("/usr/share/ibus/component")
             ]
         );
-        assert_eq!(component_dirs(None).len(), 1);
+        assert!(component_dirs(Some(OsStr::new(""))).is_empty());
     }
 
     #[test]

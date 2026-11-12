@@ -264,6 +264,73 @@ if [[ "${1:-}" == --inner ]]; then
         kill -INT "$shell"; wait "$shell" || true
         kill "$fake" "$sysbus" 2>/dev/null || true
         exit 0 ;;
+    live-config)
+        cfgdir="$HOME/.config/correctiond"
+        # cfg TEXT: rewrite config.toml by atomic rename, as the Settings window does.
+        cfg() { printf '%s\n' "$1" > "$cfgdir/config.toml.tmp"; mv "$cfgdir/config.toml.tmp" "$cfgdir/config.toml"; }
+        # src N NAME: the current input source index is N.
+        src() {
+            ev "$2" "$(js "const i = Main.panel.statusArea.keyboard._inputSourceManager.currentSource.index; " \
+                "if (i !== $1) throw new Error('source ' + i)")"
+        }
+        osk_on="if (e._osk === null) throw new Error('no watcher')"
+        osk_off="if (e._osk !== null) throw new Error('a watcher is left')"
+        ev lc-start "$(js "$osk_on")"
+        src 0 lc-src-start
+        mark toggle-open; toggle_osk; sleep 2
+        src 1 lc-src-switched
+        mark toggle-off; cfg $'[modules]\ntouch = false'; sleep 1
+        ev lc-off-null "$(js "$osk_off")"
+        src 0 lc-src-restored
+        mark toggle-on; cfg $'[modules]\ntouch = true'; sleep 1
+        ev lc-on-watcher "$(js "$osk_on")"
+        mark toggle-reopen; toggle_osk; sleep 1; toggle_osk; sleep 2
+        mark unrelated; src 1 lc-unrelated-src-before
+        cfg $'allowlist = ["firefox"]\n[modules]\ntouch = true'; sleep 1
+        src 1 lc-unrelated-src-after
+        ev lc-unrelated-watcher "$(js "$osk_on")"
+        mark double-flip
+        cfg $'[modules]\ntouch = true'; sleep 0.05; cfg $'[modules]\ntouch = false'; sleep 1
+        ev lc-double-null "$(js "$osk_off")"
+        ev lc-double-clean "$(js "if (e._configDebounceId !== 0) throw new Error('timer left')")"
+        src 0 lc-double-src
+        mark deleted; rm -f "$cfgdir/config.toml"; sleep 1
+        ev lc-deleted-watcher "$(js "$osk_on")"
+        mark invalid; cfg '[[['; sleep 1
+        ev lc-invalid-watcher "$(js "$osk_on")"
+        ev lc-keep "$(js "globalThis.smokeExt = e")"
+        mark disable; ext DisableExtension; sleep 1
+        # js needs the toggle, which is gone: read the kept instance directly.
+        ev lc-disabled "(() => { const e = globalThis.smokeExt; if (e._osk !== null || e._configMonitor !== null || e._configDebounceId !== 0 || e._gjsOskStateId !== 0 || e._touch !== null) throw new Error('left'); return 'ok'; })()"
+        mark end
+        kill -INT "$shell"; wait "$shell" || true
+        kill "$fake" "$sysbus" 2>/dev/null || true
+        exit 0 ;;
+    no-config-dir)
+        mark create; mkdir -p "$HOME/.config/correctiond"
+        printf '[modules]\ntouch = false\n' > "$HOME/.config/correctiond/config.toml"; sleep 1.5
+        evlog nocfg-osk "(() => String(Main.extensionManager.lookup('$uuid').stateObj._osk === null))()"
+        mark end
+        kill -INT "$shell"; wait "$shell" || true
+        kill "$fake" "$sysbus" 2>/dev/null || true
+        exit 0 ;;
+    live-gjs-osk)
+        ev lg-start-null "$(js "if (e._osk !== null) throw new Error('a watcher exists')")"
+        mark install
+        mkdir -p "$HOME/.local/share/gnome-shell/extensions"
+        cp -r "/usr/share/gnome-shell/extensions/$osk_uuid" "$HOME/.local/share/gnome-shell/extensions/"
+        ev lg-load "$(js "const m = Main.extensionManager; " \
+            "if (!m.lookup('$osk_uuid')) { m.loadExtension(m.createExtensionObject('$osk_uuid', " \
+            "Gio.File.new_for_path('$HOME/.local/share/gnome-shell/extensions/$osk_uuid'), 1)); } " \
+            "m.enableExtension('$osk_uuid')")"
+        sleep 3
+        ev lg-watcher "$(js "if (e._osk === null) throw new Error('no watcher')")"
+        mark open; toggle_osk; sleep 2
+        mark close; toggle_osk; sleep 2
+        mark end
+        kill -INT "$shell"; wait "$shell" || true
+        kill "$fake" "$sysbus" 2>/dev/null || true
+        exit 0 ;;
     late-osk)
         sleep 1 # 3 s after the companion started, give or take
         ev late-osk-watcher "$(js "if (e._osk === null) throw new Error('no watcher: touch is off')")"
@@ -535,6 +602,10 @@ run_one() {
     [[ "$with_osk" == 1 ]] && exts="$exts, '$osk_uuid'"
     printf '[org/gnome/shell]\nenabled-extensions=[%s]\ndisable-user-extensions=false\n' "$exts" \
         > "$home/.config/glib-2.0/settings/keyfile"
+    if [[ "$scenario" == live-config ]]; then # two sources, so a switch and its restore can be seen
+        printf "\n[org/gnome/desktop/input-sources]\nsources=[('xkb', 'us'), ('ibus', 'correctiond:us')]\n" \
+            >> "$home/.config/glib-2.0/settings/keyfile"
+    fi
     env -i PATH="$PATH" LANG=C.UTF-8 HOME="$home" \
         XDG_CONFIG_HOME="$home/.config" XDG_DATA_HOME="$home/.local/share" \
         XDG_CACHE_HOME="$home/.cache" XDG_STATE_HOME="$home/.local/state" \
@@ -704,6 +775,10 @@ prefs_checks() {
     check "$n" "prefs: no Settings log line contains a word" \
         bash -c "! grep 'correctiond-companion' '$log' | grep -qE 'kadto|sige'"
 }
+nocfg_ok() {
+    grep -qF "EVAL-OUT nocfg-osk (true, '\"true\"')" "$out/no-config-dir/calls.log" ||
+        grep -q 'cannot watch config.toml' "$out/no-config-dir/shell.log"
+}
 no_trace() { ! grep -q "extensions/$uuid/" "$out/$1/shell.log"; }
 loaded() { [[ -s "$out/$1/calls.log" ]] && grep -q 'GNOME Shell started' "$out/$1/shell.log"; }
 
@@ -744,6 +819,47 @@ check touch-off "never SetOskVisible(true) with touch = false" \
 check touch-off "every Eval succeeded" bash -c "! grep -q '^EVAL-FAILED' '$out/touch-off/calls.log'"
 check touch-off "no stack trace through the extension" no_trace touch-off
 
+run_one live-config 1 0 $'[modules]\ntouch = true' live-config
+check live-config "shell started, engine reached" loaded live-config
+check live-config "touch on at start: the watcher exists" eval_ok live-config lc-start
+check live-config "OSK open switches the input source (the watcher is live)" eval_ok live-config lc-src-switched
+check live-config "OSK open reported" between live-config toggle-open toggle-off "SetOskVisible (True,)"
+check live-config "toggle off: SetOskVisible(false) sent with the OSK open" \
+    between live-config toggle-off toggle-on "SetOskVisible (False,)"
+check live-config "toggle off: no watcher" eval_ok live-config lc-off-null
+check live-config "toggle off: the input source is restored" eval_ok live-config lc-src-restored
+check live-config "toggle on: the watcher exists" eval_ok live-config lc-on-watcher
+check live-config "toggle on: opening the OSK sends SetOskVisible(true)" \
+    between live-config toggle-reopen unrelated "SetOskVisible (True,)"
+check live-config "unrelated save: no SetOskVisible call" \
+    [ "$(count live-config unrelated double-flip 'SetOskVisible')" = 0 ]
+check live-config "unrelated save: the input source is unchanged" \
+    bash -c "grep -qx 'EVAL-OK lc-unrelated-src-before' '$out/live-config/calls.log' && grep -qx 'EVAL-OK lc-unrelated-src-after' '$out/live-config/calls.log'"
+check live-config "unrelated save: the watcher stays" eval_ok live-config lc-unrelated-watcher
+check live-config "double flip: no watcher, no timer, source restored" \
+    bash -c "grep -qx 'EVAL-OK lc-double-null' '$out/live-config/calls.log' && grep -qx 'EVAL-OK lc-double-clean' '$out/live-config/calls.log' && grep -qx 'EVAL-OK lc-double-src' '$out/live-config/calls.log'"
+check live-config "double flip: never SetOskVisible(true)" \
+    [ "$(count live-config double-flip deleted 'SetOskVisible (True,)')" = 0 ]
+check live-config "config.toml deleted: derived as missing (gjs-osk on disk: on)" eval_ok live-config lc-deleted-watcher
+check live-config "invalid TOML keeps the watcher" eval_ok live-config lc-invalid-watcher
+check live-config "disable removes watcher, monitor, timer and listener" eval_ok live-config lc-disabled
+check live-config "every Eval succeeded" bash -c "! grep -q '^EVAL-FAILED' '$out/live-config/calls.log'"
+check live-config "no stack trace through the extension" no_trace live-config
+
+run_one no-config-dir 1 0 '' no-config-dir
+check no-config-dir "shell started, engine reached" loaded no-config-dir
+check no-config-dir "touch = false is applied live, or the monitor failure was logged once" \
+    nocfg_ok
+check no-config-dir "no stack trace through the extension" no_trace no-config-dir
+
+run_one live-gjs-osk 0 0 '' live-gjs-osk
+check live-gjs-osk "shell started, engine reached" loaded live-gjs-osk
+check live-gjs-osk "no watcher while gjs-osk is not on disk" eval_ok live-gjs-osk lg-start-null
+check live-gjs-osk "gjs-osk installed and enabled live: the watcher exists" eval_ok live-gjs-osk lg-watcher
+check live-gjs-osk "OSK open reported" between live-gjs-osk open close "SetOskVisible (True,)"
+check live-gjs-osk "every Eval succeeded" bash -c "! grep -q '^EVAL-FAILED' '$out/live-gjs-osk/calls.log'"
+check live-gjs-osk "no stack trace through the extension" no_trace live-gjs-osk
+
 run_one late-osk 2 0 '' late-osk
 check late-osk "shell started, engine reached" loaded late-osk
 check late-osk "touch is on at start (gjs-osk is installed)" eval_ok late-osk late-osk-watcher
@@ -753,7 +869,7 @@ check late-osk "every Eval succeeded" bash -c "! grep -q '^EVAL-FAILED' '$out/la
 check late-osk "no stack trace through the extension" no_trace late-osk
 
 if [[ "$fail" != 0 ]]; then
-    for n in osk no-osk touch-off late-osk; do
+    for n in osk no-osk touch-off late-osk live-config no-config-dir live-gjs-osk; do
         echo "== $n/calls.log"; cat "$out/$n/calls.log" 2>/dev/null || true
         echo "== $n/shell.log (extension lines)"
         grep -n -B4 "correctiond\|$uuid" "$out/$n/shell.log" 2>/dev/null || true

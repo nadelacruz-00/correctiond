@@ -1,0 +1,55 @@
+name: Bug report
+description: Something does not work as expected.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Before you paste anything, remove everything
+        private. Do not include words you typed or words correctiond learned,
+        and do not paste the contents of `config.toml`.
+  - type: input
+    id: distro
+    attributes:
+      label: Distribution
+      description: Name and version, for example Fedora 44 or Ubuntu 26.04.
+    validations:
+      required: true
+  - type: input
+    id: gnome
+    attributes:
+      label: GNOME version
+      description: Run `gnome-shell --version`.
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: Install method
+      options:
+        - .deb package
+        - .rpm package
+        - Tarball with install.sh
+        - Built from source
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of `correctiond doctor`
+      description: With a source build, run `target/release/engine doctor` instead.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: journal
+    attributes:
+      label: Lines from `journalctl --user -b | grep correctiond`
+      description: Paste only the lines that fit your problem. Remove anything private first.
+      render: text
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true

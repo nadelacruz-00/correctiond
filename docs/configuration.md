@@ -8,8 +8,9 @@ Settings) edits it for you; this page is the reference for editing it by hand.
 
 - The engine reads the file once, when it starts. After a change, restart it
   with Settings, General, Restart engine, or `ibus restart`.
-- The extension reads `osk_source` (and the older `auto_switch_osk`) each time
-  GJS OSK opens, so those take effect without a restart.
+- The extension reads `[modules] touch`, `osk_source` (and the older
+  `auto_switch_osk`) each time GJS OSK opens, so those take effect without a
+  restart.
 - A missing file means defaults. An unreadable or invalid file also means
   defaults, and the engine prints one line to the journal
   (`correctiond: config.toml is invalid, using defaults`). Nothing in the file
@@ -24,18 +25,26 @@ or syntax it does not understand, and shows the line instead.
 
 | Key | Type | Default | Read by |
 | --- | --- | --- | --- |
-| `allowlist` | array of strings | `["firefox"]` | engine |
+| `allowlist` | array of strings | `["firefox", "firefox_firefox", "firefox-esr", "org.mozilla.firefox", "org.gnome.TextEditor"]` | engine |
 | `broken` | array of strings | `[]` | engine |
+| `[modules]` `touch` | boolean | derived (below) | extension |
 | `osk_source` | string | unset | extension |
 | `auto_switch_osk` | boolean | `true` | extension |
 | `allow_any_caller` | boolean | `false` | engine |
-| `[[languages]]` | array of tables | English, Tagalog, Waray (below) | engine |
+| `[[languages]]` | array of tables | English, plus Tagalog and Waray if their lexicon files exist (below) | engine |
 
 ### `allowlist`
 
 Apps where typos are fixed, by window class (the Wayland app id). Matching
 ignores case. Every app that is not listed is learn-only: the engine learns
 words there but never changes text.
+
+The default list has five entries: `firefox`, `firefox_firefox` (the Firefox
+snap), `firefox-esr`, `org.mozilla.firefox` and `org.gnome.TextEditor` (GNOME
+Text Editor, native and Flatpak). If you write an `allowlist`, your list
+replaces the default list entirely. A config with an explicit `allowlist`
+that was written before Text Editor joined the defaults does not gain it;
+add `org.gnome.TextEditor` yourself.
 
 The easiest way to add an app is the Settings window's Apps page: "Add an
 installed app…" lists installed apps with the id the engine matches on (the
@@ -55,6 +64,40 @@ Ghostty, Terminator, Tilix, Konsole).
 Apps whose text editing breaks corrections (for example, the deleted word and
 the fix arrive out of order). An app listed here only learns, even if it is
 also in `allowlist`. A terminal listed here is off.
+
+### `[modules]`
+
+```toml
+[modules]
+touch = true
+```
+
+`touch` turns on-screen keyboard support on or off. One switch governs both
+on-screen keyboard behaviors: the touch geometry the extension sends to the
+engine, and the input-source switch while the keyboard is open. The Settings
+window shows it as a switch on the General page.
+
+- **Derivation.** If the file has no `touch` key, the extension derives the
+  value each time: it is on when the GJS OSK extension is installed, and off
+  when it is not. GJS OSK counts as installed when
+  `gnome-shell/extensions/gjsosk@vishram1123.com` is a directory under
+  `$XDG_DATA_HOME` (`~/.local/share` when unset) or under any entry of
+  `$XDG_DATA_DIRS`. Installing GJS OSK later turns touch on by itself while
+  the key is absent. A `touch` key in the file always wins.
+- **Written only on a flip.** The Settings window writes `touch` only after
+  you flip the switch. Saving any other setting leaves the key absent if it
+  was absent, so it keeps deriving.
+- **Dependent keys.** `osk_source` and `auto_switch_osk` apply only while touch
+  is on.
+- **Wrong type.** If `touch` is not `true` or `false`, the engine ignores it
+  and prints one line to the journal (`correctiond: config.toml modules.touch
+  must be true or false; ignored`). The Settings window then treats the file
+  as one it does not understand and is read-only until you fix the line.
+- **`IBUS_COMPONENT_PATH`.** TODO-VM: whether this variable replaces the IBus
+  component directory or adds to it is not verified yet. It is filled in from
+  the VM tests (plan Task 20). Until then, do not rely on either behavior.
+- An older extension rejects the `[modules]` block and shows read-only
+  Settings. See Troubleshooting in the [README](../README.md#downgraded-extension-shows-read-only-settings).
 
 ### `osk_source`
 
@@ -91,7 +134,11 @@ client can call the control interface` at startup. `ListWords` and
 
 Each `[[languages]]` table has a `code` and a `lexicon`. If you write any
 `[[languages]]` table, your list replaces the default list entirely. The
-default is:
+default is English only. Tagalog and Waray are added to the default list only
+when their lexicon file already exists at the old default path
+(`~/.local/share/correctiond/lexicons/tl.txt` and `war.txt`), so a fresh
+install has English only and no startup warning, and an older install that
+has those files keeps them. With both files present the default is:
 
 ```toml
 [[languages]]
@@ -167,6 +214,9 @@ auto_switch_osk = true
 
 allowlist = ["firefox", "firefox_firefox", "org.gnome.TextEditor"]
 broken = []
+
+[modules]
+touch = true
 
 [[languages]]
 code = "en"

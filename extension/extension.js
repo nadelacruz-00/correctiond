@@ -40,6 +40,8 @@ const PURGE_TIMEOUT_MS = 25000;
 const UNKNOWN_METHOD = 'org.freedesktop.DBus.Error.UnknownMethod';
 // One GetStatus per focus change, not one per notify in a burst.
 const SUBTITLE_DEBOUNCE_MS = 150;
+// config.toml events settle this long before touch is re-derived.
+const CONFIG_DEBOUNCE_MS = 200;
 const FORGET_FAILED_MS = 3000;
 const COMPANION_PATH = '/org/nadelacruz/CorrectiondCompanion';
 // GNOME's extension preferences service (our Settings window's process) owns
@@ -160,7 +162,14 @@ export default class CorrectiondCompanion extends Extension {
         // Touch support: the OSK watcher exists only while touch is on.
         this._osk = null;
         this._touch = null;
-        this._setTouch(Lib.touchAfterRead(this._readConfig(), null, this._gjsOskInstalled()));
+        this._configMonitor = null;
+        this._configMonitorId = 0;
+        this._configDebounceId = 0;
+        this._gjsOskStateId = 0;
+        const read = this._readConfig();
+        this._touchKeyAbsent = !(read.kind === 'ok' && read.touch !== null);
+        this._setTouch(Lib.touchAfterRead(read, null, this._gjsOskInstalled()));
+        this._watchTouchSources();
 
         this._indicator = new AutocorrectIndicator(this._correctionOn);
         this._toggleId = this._indicator.toggle.connect('notify::checked', toggle => {
@@ -216,6 +225,8 @@ export default class CorrectiondCompanion extends Extension {
         this._indicator.destroy();
         this._indicator = null;
 
+        // No re-derive may run from here on.
+        this._unwatchTouchSources();
         // Restores a switched input source; the engine hears the OSK is gone.
         this._setTouch(false);
         this._touch = null;
@@ -365,6 +376,66 @@ export default class CorrectiondCompanion extends Extension {
         const dirs = [GLib.get_user_data_dir(), ...GLib.get_system_data_dirs()];
         return Lib.gjsOskInstalledIn(dirs,
             path => GLib.file_test(path, GLib.FileTest.IS_DIR));
+    }
+
+    /** Watches config.toml (200 ms debounce) and gjs-osk's extension state,
+     * so the touch value follows both live. */
+    _watchTouchSources() {
+        const path = GLib.build_filenamev([GLib.get_home_dir(), '.config', 'correctiond', 'config.toml']);
+        try {
+            // GIO cannot see a file appear under a directory that does not exist yet.
+            if (!GLib.file_test(GLib.path_get_dirname(path), GLib.FileTest.IS_DIR))
+                throw new Error('its folder does not exist yet');
+            this._configMonitor = Gio.File.new_for_path(path)
+                .monitor_file(Gio.FileMonitorFlags.WATCH_MOVES, null);
+            this._configMonitorId = this._configMonitor.connect('changed', () => {
+                if (this._configDebounceId)
+                    GLib.source_remove(this._configDebounceId);
+                this._configDebounceId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, CONFIG_DEBOUNCE_MS, () => {
+                    this._configDebounceId = 0;
+                    this._recomputeTouch();
+                    return GLib.SOURCE_REMOVE;
+                });
+            });
+        } catch (e) {
+            this._configMonitor = null;
+            this._logOnce('config-monitor',
+                `cannot watch config.toml (${e.message}); touch changes apply at the next enable`);
+        }
+        // While [modules] touch is absent (missing file, invalid file or no
+        // key), a gjs-osk install or enable re-derives touch.
+        this._gjsOskStateId = Main.extensionManager.connect('extension-state-changed', (_m, ext) => {
+            if (ext?.uuid === Lib.GJS_OSK_UUID && this._touchKeyAbsent)
+                this._recomputeTouch();
+        });
+    }
+
+    _unwatchTouchSources() {
+        if (this._configDebounceId) {
+            GLib.source_remove(this._configDebounceId);
+            this._configDebounceId = 0;
+        }
+        if (this._configMonitor) {
+            this._configMonitor.disconnect(this._configMonitorId);
+            this._configMonitor.cancel();
+            this._configMonitor = null;
+            this._configMonitorId = 0;
+        }
+        if (this._gjsOskStateId) {
+            Main.extensionManager.disconnect(this._gjsOskStateId);
+            this._gjsOskStateId = 0;
+        }
+    }
+
+    /** Re-reads config.toml and the disk; acts only when touch changes.
+     * A failed OskWatcher construction is not retried here: touch stays "on"
+     * with no watcher until the next enable, so a failing construct logs once. */
+    _recomputeTouch() {
+        const read = this._readConfig();
+        this._touchKeyAbsent = !(read.kind === 'ok' && read.touch !== null);
+        const next = Lib.touchAfterRead(read, this._touch, this._gjsOskInstalled());
+        if (next !== this._touch)
+            this._setTouch(next);
     }
 
     /** Builds or tears down the OSK watcher (synchronously). */

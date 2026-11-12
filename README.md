@@ -103,6 +103,8 @@ extension, may change the engine's settings or read learned words; see
 ## Requirements
 
 - GNOME Shell 50 on Wayland (the extension's `shell-version` is `["50"]`).
+  Distributions that already ship GNOME 51 (for example Arch Linux) cannot
+  enable the extension yet.
 - IBus, as GNOME's input method framework (the `ibus` command must be
   available).
 - To build from source only: a stable Rust toolchain with Cargo (CI uses the current stable release;

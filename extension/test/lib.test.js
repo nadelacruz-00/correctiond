@@ -432,9 +432,12 @@ test('gjsOskInstalledIn: finds the extension directory', () => {
     eq(gjsOskInstalledIn([], isDir), false, 'no dirs');
 });
 
-test('componentDirs: system dir plus non-empty path entries', () => {
+test('componentDirs: the variable replaces the system dir', () => {
     eq(componentDirs(null), ['/usr/share/ibus/component'], 'null');
-    eq(componentDirs(':/opt/x:'), ['/usr/share/ibus/component', '/opt/x'], 'colons');
+    eq(componentDirs(':/opt/x:'), ['/opt/x'], 'colons');
+    eq(componentDirs('/opt/x:/usr/share/ibus/component'),
+        ['/opt/x', '/usr/share/ibus/component'], 'both listed');
+    eq(componentDirs(''), [], 'empty');
 });
 
 test('componentInstalledIn: finds correctiond.xml', () => {

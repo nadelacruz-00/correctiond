@@ -72,6 +72,12 @@ Deferred from /office-hours and /autoplan (CEO, design, DX, eng). Plan: `docs/su
 **Context:** Raised by the independent CEO voice (F3). Order it against autocomplete.
 **Priority:** P1
 
+### GNOME 51
+
+**What:** Test the extension on a live GNOME Shell 51, then add `"51"` to `shell-version`.
+**Why:** Arch Linux ARM already ships GNOME Shell 51.1 (container check, 2026-11-12), so Arch users cannot enable the extension.
+**Priority:** P1
+
 ### Older GNOME (46-49)
 
 **What:** Widen `shell-version` after testing the extension on each version (Quick Settings and `extensionManager` APIs).

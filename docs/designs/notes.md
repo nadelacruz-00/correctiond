@@ -385,3 +385,52 @@ Not recorded: the result of each case (textarea, contenteditable, comma,
 password, undo), the exact Add Input Source text and click path, and
 whether `bulid` was forgotten afterwards. The engine journal had no
 correctiond lines for the test, so this entry rests on the user's report.
+
+## Release artifact check in containers (Task 20, 2026-11-12)
+
+Artifacts from the `workflow_dispatch` release run on `main` `e1c1aff`
+(aarch64 files only). This machine has no KVM, so each check ran in a fresh
+arm64 container with GNOME Shell, IBus and gnome-control-center from the
+distribution's repositories. No live Shell ran, so this does NOT cover
+typing, the extension's states, Add Input Source, or the snap.
+
+| Distribution | gnome-shell | ibus |
+|---|---|---|
+| Ubuntu 26.04.1 LTS | 50.1 | 1.5.34~rc2 |
+| Fedora 44 | 50.6 | 1.5.34 |
+| Arch Linux ARM (2026-11-12) | **51.1** | 1.5.34-rc2 |
+
+Results:
+- `sha256sum -c` passes for all six files; the versioned and version-free
+  names have the same hashes.
+- `rpm -qpR` lists `libcrypto.so.3()(64bit)`. The `.deb` depends on
+  `libc6 (>= 2.39), libssl3t64 (>= 3.0.0)`.
+- The `.deb`, the `.rpm` and the tarball's `install.sh` install and remove
+  cleanly. `correctiond doctor` and `doctor --json` run (exit 2 with no
+  session bus, exit 1 with only warnings).
+- An unowned `/usr/share/ibus/component/correctiond.xml` (a source install)
+  does not stop `apt` or `dnf`: both overwrite it with no warning. The same
+  is true over a tarball install. So the release needs no extra `sudo rm`
+  step. `install.sh` over a package install stops with `E_PKG_OWNED`.
+- `gnome-keyboard-panel.desktop` (from gnome-control-center) and
+  `GioUnix-2.0.typelib` (from glib) are present on all three.
+- `org.gnome.desktop.input-sources` has `mru-sources` on all three, and the
+  description of `current` says "DEPRECATED: This key is deprecated and
+  ignored."
+- `IBUS_COMPONENT_PATH` replaces the system component directory
+  (`ibus_registry_load`; with only a custom directory, `ibus list-engine`
+  showed 0 `xkb:` engines). On Fedora the daemon uses the registry cache in
+  `/var/cache/ibus` first and ignores the variable while the cache is valid.
+  `correctiond doctor` and the extension assumed that it adds; fixed in the
+  same change as this entry.
+- `gnome-extensions install` of the zip works. Arch's Shell 51.1 is outside
+  `shell-version` `["50"]` (TODOS: GNOME 51).
+- Leftovers after removal: an empty `/usr/lib/correctiond/` (tarball and
+  rpm), an empty `/usr/share/doc/correctiond/` (rpm), and the conffile
+  `/etc/apport/report-ignore/correctiond` (`apt remove`; `purge` removes it).
+- The engine in the `.rpm` and the tarball is not stripped (12.1 MB); the
+  `.deb` engine is stripped (9.3 MB).
+
+Not tested here: `gnome-extensions uninstall` (needs a running Shell),
+`rpm-ostree`, the Add Input Source text, the E1 states, typing, and the
+x86_64 files.

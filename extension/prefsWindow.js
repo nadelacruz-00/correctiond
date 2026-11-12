@@ -6,6 +6,7 @@
 
 import Adw from 'gi://Adw';
 import Gio from 'gi://Gio';
+import GioUnix from 'gi://GioUnix';
 import GLib from 'gi://GLib';
 import Gtk from 'gi://Gtk';
 
@@ -17,7 +18,17 @@ import {
     serializeConfig,
     validLangCode,
 } from './config.js';
-import {effectiveTouch, gjsOskInstalledIn} from './lib.js';
+import {
+    SETUP_TEXT,
+    SETUP_WAIT_MS,
+    componentDirs,
+    componentInstalledIn,
+    correctsInLine,
+    effectiveTouch,
+    gjsOskInstalledIn,
+    isCorrectiondSource,
+    setupState,
+} from './lib.js';
 import {addWordsPage} from './wordsPage.js';
 
 const BUS_NAME = 'org.nadelacruz.Correctiond1';
@@ -29,6 +40,46 @@ const OSK_CHOICES = [
     {engine: '', label: 'Don\u2019t change the layout'},
 ];
 const OBJECT_PATH = '/org/nadelacruz/Correctiond';
+
+const GET_ENGINE_URI = 'https://github.com/nadelacruz-00/correctiond#install';
+const REPORT_URI = 'https://github.com/nadelacruz-00/correctiond/issues/new?template=bug.yml';
+const KEYBOARD_PANEL_ID = 'gnome-keyboard-panel.desktop';
+const RESTART_SUBTITLE = 'Applies app and language changes. Typing pauses for a moment.';
+const RESTART_SUBTITLE_NO_SOURCE = 'Makes a newly installed engine show up in the input source list';
+
+/** True when a correctiond.xml is in the IBus component dirs of this process. */
+function componentOnDisk() {
+    return componentInstalledIn(componentDirs(GLib.getenv('IBUS_COMPONENT_PATH')),
+        path => GLib.file_test(path, GLib.FileTest.IS_REGULAR));
+}
+
+/** The org.gnome.desktop.input-sources Gio.Settings, or null when the schema is missing. */
+function inputSourcesSettings() {
+    try {
+        const src = Gio.SettingsSchemaSource.get_default();
+        if (!src?.lookup('org.gnome.desktop.input-sources', true))
+            return null;
+        return new Gio.Settings({schema_id: 'org.gnome.desktop.input-sources'});
+    } catch (e) {
+        return null;
+    }
+}
+
+/** GetStats on the engine: callback(null, json) or callback(error). */
+function getStatsCall(callback) {
+    Gio.DBus.session.call(BUS_NAME, OBJECT_PATH, BUS_NAME, 'GetStats', null,
+        new GLib.VariantType('(s)'), Gio.DBusCallFlags.NO_AUTO_START, 2000, null,
+        (conn, res) => {
+            let json;
+            try {
+                [json] = conn.call_finish(res).deep_unpack();
+            } catch (e) {
+                callback(e);
+                return;
+            }
+            callback(null, json);
+        });
+}
 
 /** Layout the Learning page shows when the active input source is not one of ours. */
 const DEFAULT_LAYOUT = 'qwerty';
@@ -177,7 +228,9 @@ function installedApps() {
  *
  * @param {Adw.PreferencesWindow} window
  * @param {{configPath?: string, restartArgv?: string[], apps?: object[], reportPath?: string,
- *   layout?: string, gjsOskInstalled?: boolean, dataDir?: string, companionCall?: (callback: (err: Error|null) => void) => void,
+ *   layout?: string, gjsOskInstalled?: boolean, dataDir?: string, statsCall?: (callback: (err: Error|null, json?: string) => void) => void,
+ *   componentProbe?: () => boolean, inputSettings?: object|null, setupWaitMs?: number,
+ *   launchKeyboardPanel?: () => boolean, keyboardAppInfo?: object|null, companionCall?: (callback: (err: Error|null) => void) => void,
  *   wordsCalls?: object}} opts - wordsCalls: see addWordsPage in wordsPage.js
  */
 export function fillWindow(window, opts = {}) {
@@ -235,12 +288,15 @@ export function fillWindow(window, opts = {}) {
         return true;
     };
 
+    let setupStateNow = null;
+
     const controller = {
         configPath,
         readOnly,
         error: parsed.ok ? null : parsed.error,
         model,
         refreshers: [],
+        restartedWhileFailed: false,
         refresh() {
             for (const r of this.refreshers)
                 r();
@@ -320,6 +376,8 @@ export function fillWindow(window, opts = {}) {
             return save();
         },
         restartEngine() {
+            if (setupStateNow === 'failed')
+                controller.restartedWhileFailed = true;
             try {
                 const proc = Gio.Subprocess.new(restartArgv, Gio.SubprocessFlags.NONE);
                 proc.wait_check_async(null, (p, res) => {
@@ -387,17 +445,55 @@ export function fillWindow(window, opts = {}) {
     const statusGroup = new Adw.PreferencesGroup({title: 'Status'});
     general.add(statusGroup);
     const statusRow = new Adw.ActionRow({title: 'Autocorrect engine', subtitle: 'Checking…', use_markup: false});
+    const suffixLink = (label, uri) => new Gtk.LinkButton({
+        label, uri, visible: false, valign: Gtk.Align.CENTER,
+    });
+    const getEngineLink = suffixLink('Get the engine', GET_ENGINE_URI);
+    const reportLink = suffixLink('Report a problem', REPORT_URI);
+    let keyboardAppInfo = null;
+    if ('keyboardAppInfo' in opts) {
+        keyboardAppInfo = opts.keyboardAppInfo;
+    } else {
+        try {
+            keyboardAppInfo = GioUnix.DesktopAppInfo.new(KEYBOARD_PANEL_ID);
+        } catch (e) {
+            keyboardAppInfo = null;
+        }
+    }
+    const keyboardButton = new Gtk.Button({
+        label: 'Open Keyboard Settings', visible: false, valign: Gtk.Align.CENTER, css_classes: ['flat'],
+    });
+    const launchKeyboardPanel = opts.launchKeyboardPanel ?? (() => keyboardAppInfo.launch([], null));
+    controller.launchKeyboard = () => {
+        let ok = false;
+        try {
+            ok = launchKeyboardPanel() !== false;
+        } catch (e) {
+            log(`correctiond-companion prefs: ${e.message}`);
+        }
+        if (!ok)
+            toast("Couldn't open Keyboard Settings. Open Settings › Keyboard › Input Sources yourself.");
+        return ok;
+    };
+    keyboardButton.connect('clicked', () => controller.launchKeyboard());
     const refreshBtn = new Gtk.Button({
         icon_name: 'view-refresh-symbolic',
         tooltip_text: 'Refresh',
         valign: Gtk.Align.CENTER,
         css_classes: ['flat'],
     });
+    statusRow.add_suffix(getEngineLink);
+    statusRow.add_suffix(keyboardButton);
+    statusRow.add_suffix(reportLink);
     statusRow.add_suffix(refreshBtn);
     statusGroup.add(statusRow);
+    controller.statusRow = statusRow;
+    controller.getEngineLink = getEngineLink;
+    controller.keyboardButton = keyboardButton;
+    controller.reportLink = reportLink;
     const restartRow = new Adw.ActionRow({
         title: 'Restart engine',
-        subtitle: 'Applies app and language changes. Typing pauses for a moment.',
+        subtitle: RESTART_SUBTITLE,
         use_markup: false,
     });
     const restartBtn = new Gtk.Button({label: 'Restart', valign: Gtk.Align.CENTER});
@@ -405,33 +501,113 @@ export function fillWindow(window, opts = {}) {
     restartRow.add_suffix(restartBtn);
     restartRow.activatable_widget = restartBtn;
     statusGroup.add(restartRow);
+    controller.restartRow = restartRow;
 
     let updateOsk = () => {}; // set with the On-screen keyboard group below
 
     let wordsLearned = null; // from GetStats; null while the engine is not running
+
+    // First-run state (spec 8.1). The input sources are read from the window's own
+    // Gio.Settings (opts.inputSettings in tests), never written.
+    const inputSettings = 'inputSettings' in opts ? opts.inputSettings : inputSourcesSettings();
+    const setupWaitMs = opts.setupWaitMs ?? SETUP_WAIT_MS;
+    let waitExpired = false;
+    let waitTimerId = 0;
+    let serial = 0;
+    const clearWaitTimer = () => {
+        if (waitTimerId)
+            GLib.source_remove(waitTimerId);
+        waitTimerId = 0;
+    };
+    const readSources = () => {
+        try {
+            const configured = inputSettings.get_value('sources').deepUnpack()
+                .some(src => isCorrectiondSource(src));
+            const cur = currentSource(inputSettings);
+            return {configured, current: !!cur && isCorrectiondSource(cur)};
+        } catch (e) {
+            return {configured: false, current: false};
+        }
+    };
+    const showSetup = state => {
+        setupStateNow = state;
+        if (state === null)
+            controller.restartedWhileFailed = false;
+        getEngineLink.visible = state === 'no-engine';
+        keyboardButton.visible = state === 'no-source' && keyboardAppInfo !== null;
+        reportLink.visible = state === 'failed' && controller.restartedWhileFailed;
+        restartRow.sensitive = state !== 'no-engine';
+        restartRow.subtitle = state === 'no-source' ? RESTART_SUBTITLE_NO_SOURCE : RESTART_SUBTITLE;
+    };
+    const correctsLine = () => {
+        const names = (model?.allowlist ?? []).map(id => appById.get(id.toLowerCase())?.name ?? id);
+        return names.length > 0 ? correctsInLine(names) : '';
+    };
     const refreshStatus = () => {
         updateOsk();
-        Gio.DBus.session.call(BUS_NAME, OBJECT_PATH, BUS_NAME, 'GetStats', null,
-            new GLib.VariantType('(s)'), Gio.DBusCallFlags.NO_AUTO_START, 2000, null,
-            (conn, res) => {
+        const mine = ++serial;
+        (opts.statsCall ?? getStatsCall)((err, json) => {
+            if (mine !== serial)
+                return;
+            let stats = null;
+            if (!err) {
                 try {
-                    const [json] = conn.call_finish(res).deep_unpack();
-                    const s = JSON.parse(json);
-                    controller.setWordsLearned(s.words_learned);
-                    const store = s.persistent
-                        ? 'saved encrypted'
-                        : 'kept in memory only (keyring locked or unavailable)';
-                    statusRow.subtitle = `Running. ${s.words_learned} words learned, ${store}. ` +
-                        `${s.corrections} corrections since start.`;
+                    stats = JSON.parse(json);
                 } catch (e) {
-                    controller.setWordsLearned(null);
-                    statusRow.subtitle = 'Not running. Select an “autocorrect” input source.';
+                    stats = null;
                 }
+            }
+            const owned = stats !== null;
+            const {configured, current} = readSources();
+            if (owned || !current) {
+                waitExpired = false;
+                clearWaitTimer();
+            }
+            const state = setupState({
+                componentInstalled: owned || (opts.componentProbe ?? componentOnDisk)(),
+                sourceConfigured: configured,
+                sourceCurrent: current,
+                engineOwned: owned,
+                ownerWaitExpired: waitExpired,
             });
+            showSetup(state);
+            if (state === 'starting' && !waitTimerId) {
+                waitTimerId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, setupWaitMs, () => {
+                    waitTimerId = 0;
+                    waitExpired = true;
+                    refreshStatus();
+                    return GLib.SOURCE_REMOVE;
+                });
+            }
+            if (state !== null) {
+                controller.setWordsLearned(null);
+                statusRow.subtitle = SETUP_TEXT.settings[state];
+                return;
+            }
+            controller.setWordsLearned(stats.words_learned);
+            const store = stats.persistent
+                ? 'saved encrypted'
+                : 'kept in memory only (keyring locked or unavailable)';
+            const line = correctsLine();
+            statusRow.subtitle = `Running. ${stats.words_learned} words learned, ${store}. ` +
+                `${stats.corrections} corrections since start.${line ? ` ${line}` : ''}`;
+        });
     };
     refreshBtn.connect('clicked', refreshStatus);
     controller.refreshers.push(refreshStatus);
-    refreshStatus();
+    controller.refreshStatus = refreshStatus;
+    const settingsIds = [];
+    for (const sig of ['changed::sources', 'changed::mru-sources'])
+        settingsIds.push(inputSettings?.connect(sig, refreshStatus));
+    const closeStatus = () => {
+        serial++;
+        clearWaitTimer();
+        for (const id of settingsIds.splice(0))
+            inputSettings?.disconnect(id);
+        return false;
+    };
+    window.connect('close-request', closeStatus);
+    window.connect('unrealize', closeStatus); // no ::destroy handlers: GJS runs them during GC
 
     const oskGroup = new Adw.PreferencesGroup({title: 'On-screen keyboard'});
     general.add(oskGroup);
@@ -759,5 +935,6 @@ export function fillWindow(window, opts = {}) {
     controller.words = addWordsPage(window, opts);
 
     controller.banners = banners;
+    refreshStatus(); // last: it fills the Learning page through setWordsLearned
     return controller;
 }

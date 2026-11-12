@@ -210,6 +210,7 @@ export function addWordsPage(window, opts = {}) {
         icon_name: 'view-refresh-symbolic', tooltip_text: 'Refresh', valign: Gtk.Align.CENTER,
         css_classes: ['flat'],
     });
+    refreshButton.update_property([Gtk.AccessibleProperty.LABEL], ['Refresh']);
     toolbar.append(searchEntry);
     toolbar.append(new Gtk.Label({label: 'Sort:', css_classes: ['dim-label']}));
     toolbar.append(sortRow);

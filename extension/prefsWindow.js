@@ -228,7 +228,7 @@ function installedApps() {
  *
  * @param {Adw.PreferencesWindow} window
  * @param {{configPath?: string, restartArgv?: string[], apps?: object[], reportPath?: string,
- *   layout?: string, gjsOskInstalled?: boolean, dataDir?: string, statsCall?: (callback: (err: Error|null, json?: string) => void) => void,
+ *   layout?: string, gjsOskInstalled?: boolean|(() => boolean), dataDir?: string, statsCall?: (callback: (err: Error|null, json?: string) => void) => void,
  *   componentProbe?: () => boolean, inputSettings?: object|null, setupWaitMs?: number,
  *   launchKeyboardPanel?: () => boolean, keyboardAppInfo?: object|null, companionCall?: (callback: (err: Error|null) => void) => void,
  *   wordsCalls?: object}} opts - wordsCalls: see addWordsPage in wordsPage.js
@@ -242,7 +242,11 @@ export function fillWindow(window, opts = {}) {
     // --- model and file ---
 
     let text = null;
-    const gjsOskInstalled = opts.gjsOskInstalled ?? gjsOskOnDisk();
+    // Probed again on every status refresh (spec 7.5); a boolean or a function in tests.
+    const probeGjsOsk = () => typeof opts.gjsOskInstalled === 'function'
+        ? !!opts.gjsOskInstalled()
+        : opts.gjsOskInstalled ?? gjsOskOnDisk();
+    let gjsOskInstalled = probeGjsOsk();
     try {
         const [, bytes] = GLib.file_get_contents(configPath);
         text = new TextDecoder().decode(bytes);
@@ -289,6 +293,7 @@ export function fillWindow(window, opts = {}) {
     };
 
     let setupStateNow = null;
+    let restartRefreshId = 0;
 
     const controller = {
         configPath,
@@ -378,6 +383,9 @@ export function fillWindow(window, opts = {}) {
         restartEngine() {
             if (setupStateNow === 'failed')
                 controller.restartedWhileFailed = true;
+            // A new wait of setupWaitMs before 'failed' shows again.
+            waitExpired = false;
+            clearWaitTimer();
             try {
                 const proc = Gio.Subprocess.new(restartArgv, Gio.SubprocessFlags.NONE);
                 proc.wait_check_async(null, (p, res) => {
@@ -385,7 +393,10 @@ export function fillWindow(window, opts = {}) {
                         p.wait_check_finish(res);
                         setRestartPending(false);
                         toast('Autocorrect engine restarted');
-                        GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 3, () => {
+                        if (restartRefreshId)
+                            GLib.source_remove(restartRefreshId);
+                        restartRefreshId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 3, () => {
+                            restartRefreshId = 0;
                             this.refresh();
                             return GLib.SOURCE_REMOVE;
                         });
@@ -533,7 +544,7 @@ export function fillWindow(window, opts = {}) {
     };
     const showSetup = state => {
         setupStateNow = state;
-        if (state === null)
+        if (state !== 'failed' && state !== 'starting')
             controller.restartedWhileFailed = false;
         getEngineLink.visible = state === 'no-engine';
         keyboardButton.visible = state === 'no-source' && keyboardAppInfo !== null;
@@ -604,6 +615,9 @@ export function fillWindow(window, opts = {}) {
     const closeStatus = () => {
         serial++;
         clearWaitTimer();
+        if (restartRefreshId)
+            GLib.source_remove(restartRefreshId);
+        restartRefreshId = 0;
         for (const id of settingsIds.splice(0))
             inputSettings?.disconnect(id);
         return false;
@@ -640,15 +654,25 @@ export function fillWindow(window, opts = {}) {
     oskGroup.add(oskRow);
     controller.oskRow = oskRow;
     const oskRowSubtitle = oskRow.subtitle;
+    let syncingTouch = false;
     updateOsk = () => {
+        gjsOskInstalled = probeGjsOsk();
         const touchOn = effectiveTouch(model?.modules.touch ?? null, gjsOskInstalled);
+        if (touchRow.active !== touchOn) {
+            syncingTouch = true; // show the derived value without saving it
+            touchRow.active = touchOn;
+            syncingTouch = false;
+        }
         oskGroup.visible = gjsOskInstalled || touchOn;
         oskGroup.description = touchOn && !gjsOskInstalled ? 'GJS OSK is not installed' : '';
         oskRow.sensitive = !readOnly && touchOn;
         oskRow.subtitle = touchOn ? oskRowSubtitle : 'Turn on on-screen keyboard support first';
     };
     updateOsk();
-    touchRow.connect('notify::active', () => controller.setTouch(touchRow.active));
+    touchRow.connect('notify::active', () => {
+        if (!syncingTouch)
+            controller.setTouch(touchRow.active);
+    });
 
     const fileGroup = new Adw.PreferencesGroup({
         title: 'Settings file',

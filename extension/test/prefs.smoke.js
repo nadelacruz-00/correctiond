@@ -144,6 +144,17 @@ check(read(odd) === 'allowlist = ["firefox"]\ntypo_key = true\n', 'read-only fil
     t.touchRow.active = true;
     check(read(tpath('d')).includes('touch = true') && t.oskRow.sensitive === true, 'switching back on');
 
+    // GJS OSK installed while Settings is open: the next refresh shows the group.
+    {
+        let installed = false;
+        t = fw('f', {gjsOskInstalled: () => installed, statsCall: cb => cb(new Error('down')), componentProbe: () => true, inputSettings: null});
+        check(t.oskGroup.visible === false && t.touchRow.active === false, 'probe: hidden while not installed');
+        installed = true;
+        t.refreshStatus();
+        check(t.oskGroup.visible === true && t.touchRow.active === true, 'probe: re-probed on refresh');
+        check(!GLib.file_test(tpath('f'), GLib.FileTest.EXISTS), 'probe: showing the derived value writes nothing');
+    }
+
     t = fw('e', {gjsOskInstalled: true});
     check(t.addApp('allowlist', 'org.example.Notes'), 'add app with touch absent');
     check(!read(tpath('e')).includes('touch'), 'saving another setting keeps touch absent');
@@ -289,9 +300,14 @@ check(read(odd) === 'allowlist = ["firefox"]\ntypo_key = true\n', 'read-only fil
         check(f.reportLink.visible === false && f.reportLink.label === 'Report a problem' &&
             f.reportLink.uri === 'https://github.com/nadelacruz-00/correctiond/issues/new?template=bug.yml',
         'failed: report link hidden before a Restart');
+        // Restart re-arms the wait: no 'failed' (and no link) until it runs out again.
         f.restartEngine();
         f.refreshStatus();
-        check(f.restartedWhileFailed && f.reportLink.visible, 'failed after Restart: report link visible');
+        check(f.statusRow.subtitle === 'Starting\u2026' && !f.reportLink.visible,
+            `after Restart the wait runs again: ${f.statusRow.subtitle}`);
+        check(f.restartedWhileFailed, 'the Restart-while-failed mark survives the new wait');
+        spin(400);
+        check(f.statusRow.subtitle === TEXT('failed') && f.reportLink.visible, 'failed after Restart: report link visible');
         check(set.handlerCount() === 2, 'two input-source handlers connected');
         win.emit('close-request');
         check(set.handlerCount() === 0, 'close disconnects the input-source handlers');

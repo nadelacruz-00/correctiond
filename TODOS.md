@@ -62,7 +62,7 @@ Deferred from /office-hours and /autoplan (CEO, design, DX, eng). Plan: `docs/su
 
 **What:** A stage that offers a completion from learned word pairs and vocabulary as preedit after the cursor, accepted with Tab or Right, in allowlisted apps only.
 **Why:** The user's next headline feature; the learned word pairs already exist.
-**Context:** GNOME on Wayland may ignore preedit styling (reported for ibus-typing-booster), so prototype in Firefox and GTK4 before designing the UX. Decide the engine Stage seam here (deferred from this round if the gate accepts that).
+**Context:** GNOME on Wayland may ignore preedit styling (reported for ibus-typing-booster), so prototype in Firefox and GTK4 before designing the UX. Decide the engine Stage seam here (deferred from this round by the gate).
 **Priority:** P1
 
 ### GNOME built-in on-screen keyboard support

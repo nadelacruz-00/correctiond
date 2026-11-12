@@ -35,6 +35,8 @@ const SHOW_LABEL = 'Show learned words…';
 const NOT_ALLOWED = 'Not allowed';
 const UNAVAILABLE = 'Turn on the Autocorrect extension to use this';
 const LOAD_FAILED = 'Couldn\'t load your learned words';
+const EMPTY_TEXT = 'Nothing learned yet. correctiond learns as you type and fix words. ' +
+    'To start with your own vocabulary, see correctiond-import-cookbook.';
 const UPDATE_ENGINE = 'Update correctiond to use this';
 
 // The page's connection is not (or no longer) allowed: the screen lock
@@ -213,6 +215,10 @@ export function addWordsPage(window, opts = {}) {
     toolbar.append(sortRow);
     toolbar.append(refreshButton);
     listBox.append(toolbar);
+    const emptyLabel = new Gtk.Label({
+        label: EMPTY_TEXT, wrap: true, xalign: 0, use_markup: false, visible: false, css_classes: ['dim-label'],
+    });
+    listBox.append(emptyLabel);
 
     const switchList = new Gtk.ListBox({selection_mode: Gtk.SelectionMode.NONE, css_classes: ['boxed-list']});
     const allSwitch = new Adw.SwitchRow({title: 'Show all stored words', use_markup: false});
@@ -516,6 +522,7 @@ export function addWordsPage(window, opts = {}) {
         }
         fillStore();
         syncSelection();
+        emptyLabel.visible = rows.size === 0;
         showList(true);
     };
 
@@ -625,6 +632,7 @@ export function addWordsPage(window, opts = {}) {
         page,
         showButton,
         statusLabel,
+        emptyLabel,
         searchEntry,
         sortRow,
         allSwitch,

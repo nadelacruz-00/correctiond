@@ -198,6 +198,13 @@ check(read(odd) === 'allowlist = ["firefox"]\ntypo_key = true\n', 'read-only fil
     check(c.getEngineLink.visible && c.getEngineLink.label === 'Get the engine' &&
         c.getEngineLink.uri === 'https://github.com/nadelacruz-00/correctiond#install', 'no-engine: Get the engine link');
     check(c.restartRow.sensitive === false, 'no-engine: Restart row insensitive');
+    check(c.refreshButton?.tooltip_text === 'Refresh status', 'refresh icon tooltip');
+    // GTK 4 has no getter for the accessible label (the AT context exposes
+    // only role and display), so the page records what it set.
+    check(c.refreshButton.get_at_context() !== null && c.refreshButtonLabel === 'Refresh status',
+        'refresh icon accessible label set');
+    for (const k of ['getEngineLink', 'keyboardButton', 'reportLink'])
+        check(typeof c[k].label === 'string' && c[k].label !== '', `${k} has a label`);
     check(!c.keyboardButton.visible && !c.reportLink.visible, 'no-engine: no other controls');
     check(c.statusRow.get_last_child() !== null, 'status row has children');
 
@@ -812,6 +819,21 @@ check(stuckWin.win.destroyCalls === 0 && stuckWin.win.closeCalls === 0, 'stuck f
     check(s.closes === 1 && s.forgets.length === 0, 'connection closed, nothing sent');
     check(win.destroyCalls === 0 && win.closeCalls === 0 && win.releases === 1, 'nothing pending: no destroy() or close()');
 }
+
+// Words empty state (Task 16).
+{
+    const s = stubCalls(() => ({listWords: () => Promise.resolve([])}));
+    const {w} = loaded(s);
+    check(w.emptyLabel?.label ===
+        'Nothing learned yet. correctiond learns as you type and fix words. To start with your own vocabulary, see correctiond-import-cookbook.',
+    'words empty state text');
+    check(w.emptyLabel?.get_mapped() !== undefined && w.emptyLabel?.visible === true, 'words empty state visible');
+}
+{
+    const {w} = loaded(stubCalls());
+    check(w.emptyLabel?.visible === false, 'words empty state hidden when words exist');
+}
+
 
 void Gtk;
 GLib.spawn_command_line_sync(`rm -rf ${GLib.shell_quote(dir)}`);

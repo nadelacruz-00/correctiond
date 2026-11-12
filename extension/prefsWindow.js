@@ -478,10 +478,13 @@ export function fillWindow(window, opts = {}) {
     keyboardButton.connect('clicked', () => controller.launchKeyboard());
     const refreshBtn = new Gtk.Button({
         icon_name: 'view-refresh-symbolic',
-        tooltip_text: 'Refresh',
+        tooltip_text: 'Refresh status',
         valign: Gtk.Align.CENTER,
         css_classes: ['flat'],
     });
+    refreshBtn.update_property([Gtk.AccessibleProperty.LABEL], ['Refresh status']);
+    controller.refreshButtonLabel = 'Refresh status';
+    controller.refreshButton = refreshBtn;
     statusRow.add_suffix(getEngineLink);
     statusRow.add_suffix(keyboardButton);
     statusRow.add_suffix(reportLink);

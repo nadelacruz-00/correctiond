@@ -382,9 +382,16 @@ if [[ "${1:-}" == --inner ]]; then
         kill "$fake" "$sysbus" 2>/dev/null || true
         exit 0 ;;
     no-config-dir)
-        mark create; mkdir -p "$HOME/.config/correctiond"
+        # A fresh install: no ~/.config/correctiond. Touch derives on from the
+        # installed GJS OSK; the first Settings save creates the folder, then
+        # the file. The switch written off must apply live.
+        ev nocfg-start "$(js "if (e._osk === null || e._configMonitor === null) throw new Error('no watcher or no monitor')")"
+        mark create; mkdir -p "$HOME/.config/correctiond"; sleep 1
         printf '[modules]\ntouch = false\n' > "$HOME/.config/correctiond/config.toml"; sleep 1.5
         evlog nocfg-osk "(() => String(Main.extensionManager.lookup('$uuid').stateObj._osk === null))()"
+        ev nocfg-keep "$(js "globalThis.smokeExt = e")"
+        mark disable; ext DisableExtension; sleep 1
+        evlog nocfg-disabled "(() => { const e = globalThis.smokeExt; if (e._osk !== null || e._configMonitor !== null || e._configDebounceId !== 0 || e._gjsOskStateId !== 0 || e._touch !== null) throw new Error('left'); return 'ok'; })()"
         mark end
         kill -INT "$shell"; wait "$shell" || true
         kill "$fake" "$sysbus" 2>/dev/null || true
@@ -867,8 +874,10 @@ prefs_checks() {
         bash -c "! grep 'correctiond-companion' '$log' | grep -qE 'kadto|sige'"
 }
 nocfg_ok() {
-    grep -qF "EVAL-OUT nocfg-osk (true, '\"true\"')" "$out/no-config-dir/calls.log" ||
-        grep -q 'cannot watch config.toml' "$out/no-config-dir/shell.log"
+    grep -qF "EVAL-OUT nocfg-osk (true, '\"true\"')" "$out/no-config-dir/calls.log"
+}
+nocfg_clean() {
+    grep -qF "EVAL-OUT nocfg-disabled (true, '\"ok\"')" "$out/no-config-dir/calls.log"
 }
 no_trace() { ! grep -q "extensions/$uuid/" "$out/$1/shell.log"; }
 loaded() { [[ -s "$out/$1/calls.log" ]] && grep -q 'GNOME Shell started' "$out/$1/shell.log"; }
@@ -939,8 +948,11 @@ check live-config "no stack trace through the extension" no_trace live-config
 
 run_one no-config-dir 1 0 '' no-config-dir
 check no-config-dir "shell started, engine reached" loaded no-config-dir
-check no-config-dir "touch = false is applied live, or the monitor failure was logged once" \
+check no-config-dir "touch = false written after the folder is created applies live" \
     nocfg_ok
+check no-config-dir "no monitor failure was logged" \
+    bash -c "! grep -q 'cannot watch config.toml' '$out/no-config-dir/shell.log'"
+check no-config-dir "disable releases both monitors, the timer and the listener" nocfg_clean
 check no-config-dir "no stack trace through the extension" no_trace no-config-dir
 
 run_one live-gjs-osk 0 0 '' live-gjs-osk

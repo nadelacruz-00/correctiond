@@ -396,26 +396,15 @@ export default class CorrectiondCompanion extends Extension {
     }
 
     /** Watches config.toml (200 ms debounce) and gjs-osk's extension state,
-     * so the touch value follows both live. */
+     * so the touch value follows both live. GIO does not see a file appear
+     * under a folder that does not exist yet (checked in the no-config-dir
+     * smoke scenario), so while ~/.config/correctiond is missing the parent
+     * folder is watched, and the file monitor attaches when it appears. */
     _watchTouchSources() {
-        const path = GLib.build_filenamev([GLib.get_home_dir(), '.config', 'correctiond', 'config.toml']);
         try {
-            // GIO cannot see a file appear under a directory that does not exist yet.
-            if (!GLib.file_test(GLib.path_get_dirname(path), GLib.FileTest.IS_DIR))
-                throw new Error('its folder does not exist yet');
-            this._configMonitor = Gio.File.new_for_path(path)
-                .monitor_file(Gio.FileMonitorFlags.WATCH_MOVES, null);
-            this._configMonitorId = this._configMonitor.connect('changed', () => {
-                if (this._configDebounceId)
-                    GLib.source_remove(this._configDebounceId);
-                this._configDebounceId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, CONFIG_DEBOUNCE_MS, () => {
-                    this._configDebounceId = 0;
-                    this._recomputeTouch();
-                    return GLib.SOURCE_REMOVE;
-                });
-            });
+            this._attachConfigMonitor();
         } catch (e) {
-            this._configMonitor = null;
+            this._dropConfigMonitors();
             this._logOnce('config-monitor',
                 `cannot watch config.toml (${e.message}); touch changes apply at the next enable`);
         }
@@ -427,17 +416,58 @@ export default class CorrectiondCompanion extends Extension {
         });
     }
 
-    _unwatchTouchSources() {
-        if (this._configDebounceId) {
+    _queueRecompute() {
+        if (this._configDebounceId)
             GLib.source_remove(this._configDebounceId);
+        this._configDebounceId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, CONFIG_DEBOUNCE_MS, () => {
             this._configDebounceId = 0;
+            this._recomputeTouch();
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
+    _attachConfigMonitor() {
+        const dir = GLib.build_filenamev([GLib.get_home_dir(), '.config', 'correctiond']);
+        if (GLib.file_test(dir, GLib.FileTest.IS_DIR)) {
+            this._configMonitor = Gio.File.new_for_path(GLib.build_filenamev([dir, 'config.toml']))
+                .monitor_file(Gio.FileMonitorFlags.WATCH_MOVES, null);
+            this._configMonitorId = this._configMonitor.connect('changed', () => this._queueRecompute());
+            return;
         }
+        // The folder is missing: watch its parent for the folder to appear.
+        this._configMonitor = Gio.File.new_for_path(GLib.path_get_dirname(dir))
+            .monitor_directory(Gio.FileMonitorFlags.WATCH_MOVES, null);
+        this._configMonitorId = this._configMonitor.connect('changed', () => {
+            if (!GLib.file_test(dir, GLib.FileTest.IS_DIR))
+                return;
+            try {
+                this._dropConfigMonitors();
+                this._attachConfigMonitor();
+            } catch (e) {
+                this._dropConfigMonitors();
+                this._logOnce('config-monitor',
+                    `cannot watch config.toml (${e.message}); touch changes apply at the next enable`);
+            }
+            // The file may be written before the file monitor exists.
+            this._queueRecompute();
+        });
+    }
+
+    _dropConfigMonitors() {
         if (this._configMonitor) {
             this._configMonitor.disconnect(this._configMonitorId);
             this._configMonitor.cancel();
             this._configMonitor = null;
             this._configMonitorId = 0;
         }
+    }
+
+    _unwatchTouchSources() {
+        if (this._configDebounceId) {
+            GLib.source_remove(this._configDebounceId);
+            this._configDebounceId = 0;
+        }
+        this._dropConfigMonitors();
         if (this._gjsOskStateId) {
             Main.extensionManager.disconnect(this._gjsOskStateId);
             this._gjsOskStateId = 0;

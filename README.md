@@ -345,7 +345,7 @@ the engine for the way you installed it:
 | Installed with | Remove with |
 | --- | --- |
 | `.deb` | `sudo apt remove correctiond` |
-| `.rpm` | `sudo dnf remove correctiond` (ostree: `rpm-ostree uninstall correctiond`) |
+| `.rpm` | `sudo dnf remove correctiond` (ostree: `rpm-ostree uninstall correctiond`, TODO-VM) |
 | Tarball | `sudo ./install.sh --uninstall` from the extracted directory |
 | Source build | `sudo rm /usr/share/ibus/component/correctiond.xml` |
 
@@ -358,6 +358,8 @@ Then, for all formats:
    ```sh
    gnome-extensions uninstall correctiond-companion@nadelacruz-00.github.io
    ```
+
+   TODO-VM: check this command on a clean install.
 
 4. Optionally remove the remaining files: `~/.config/correctiond/` (settings)
    and `~/.local/share/correctiond/` (lexicons and the import report). If the
@@ -588,8 +590,8 @@ again. Your settings and learned words are not touched.
 ### Downgraded extension shows read-only Settings
 
 An older extension cannot read a `[modules]` block in
-`~/.config/correctiond/config.toml`. Only people who turned on the on-screen
-keyboard switch have that block. Open the file, delete the `[modules]` block
+`~/.config/correctiond/config.toml`. Only people who flipped the on-screen
+keyboard switch (on or off) have that block. Open the file, delete the `[modules]` block
 (the heading and the lines under it) and save. Then reopen Settings.
 
 ### After updating the extension from extensions.gnome.org

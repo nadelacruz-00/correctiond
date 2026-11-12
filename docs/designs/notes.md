@@ -246,3 +246,142 @@ in again). Afterwards, unset `CORRECTIOND_TRACE` and delete
       `kill -SEGV $(pgrep -f /usr/lib/correctiond/engine)`, then
       `ls /var/crash` shows no `_usr_lib_correctiond_engine.*` file;
       `ibus restart` afterwards.
+
+## Clean-install check in Docker (2026-11-08)
+
+The plan asked for a clean Ubuntu 26.04 VM. The arm64 dev machine has no
+KVM (`kvm: HYP mode not available`), so this ran in an `ubuntu:26.04`
+container (native arm64, 8 cores) with a headless GNOME Shell 50 Wayland
+session. It covers the install timings and the engine in Firefox. It does
+NOT cover the Firefox snap: snapd does not run in Docker, so Firefox is the
+Mozilla `.deb`. The snap checks are owed on the desktop (below).
+
+Versions: Ubuntu 26.04.1 LTS, GNOME Shell 50.1, IBus 1.5.34~rc2-1, Firefox
+159.0.1 (packages.mozilla.org `.deb`, app id `firefox`), correctiond
+`3ce2972` (GitHub `main`).
+
+Setup that is not on a real desktop:
+- The "desktop" layer (gnome-shell, ibus, Firefox, GTK4) was in the base
+  image and is not in the timings. `apt-get update` ran before the timer.
+- `gnome-shell --headless --wayland --no-x11`, on a private session and
+  system bus. A container has no `/etc/machine-id`; without one, the `ibus`
+  CLI cannot find the daemon (`Can't connect to IBus.`). We mounted one.
+- "Log out and in" = the shell started after `install-extension.sh`.
+- Settings › Apps = `~/.config/correctiond/config.toml` written before the
+  engine started: `allowlist = ["firefox", "correctiond.probe"]`.
+- Keys came from a Clutter virtual keyboard through
+  `org.gnome.Shell.Eval` (the test-only helper
+  `scripts/smoke-unsafe@correctiond.test`), so they go through Mutter and
+  IBus like real key presses. Field values were read from the window
+  title, which each test page sets on `input`.
+- Firefox's content sandbox was off (`MOZ_DISABLE_CONTENT_SANDBOX=1`):
+  Docker blocks its user namespaces and the tabs crashed. Its first-run
+  modal asks to accept the Terms of Use; we accepted it in the throwaway
+  profile.
+- Firefox refuses top-level `data:` URLs from the command line, so the
+  plan's test pages were loaded as the same HTML from `file://`.
+- The container has no keyring, so the learning store was memory-only, and
+  `ibus restart` before each test set gave a clean store.
+
+### Install timings (step 2, README path)
+
+| Step | Time |
+| --- | --- |
+| `sudo apt install -y git build-essential pkg-config libssl-dev curl` | 15.5 s |
+| rustup (`curl … \| sh -s -- -y`) | 12.5 s |
+| `git clone` | 1.6 s |
+| `cargo build --release` (cold, crate downloads included) | 74.9 s |
+| `scripts/install-dev.sh` | < 0.1 s |
+| `scripts/install-extension.sh` | 0.1 s |
+| `gnome-extensions enable …` (after the new login) | 0.1 s |
+
+About 1 min 45 s in total on this machine. An x86 laptop may be slower at
+`cargo build`. The human steps (log out and in, Settings clicks) are not in
+the table.
+
+### Turn it on (step 3)
+
+- Super+Space switched from `xkb:us::eng` to the engine:
+  `ibus engine` → `correctiond:us`. PASS.
+- Quick Settings line with Firefox focused: "Correcting in Firefox"
+  (the `.deb` id `firefox` is in the default app list). In a password
+  field: "Off in this field (password or private)".
+- The input-source entry text and click path were not seen: there is no
+  Settings window. `data/correctiond.xml` gives `longname`
+  `US, autocorrect`, language `en`, so the dialog probably shows "English
+  (US, autocorrect)". Confirm on the desktop.
+
+### Typing results (steps 4 and 5)
+
+Each set ran on a fresh engine. `bulid` was added because `teh` is never
+fixed (see the first finding).
+
+| Check | Firefox textarea | Firefox contenteditable | GTK4 TextView |
+| --- | --- | --- | --- |
+| `teh ` → `the ` | FAIL (`teh `) | FAIL (`teh `) | FAIL (`teh `) |
+| `teh,` → `the,` | FAIL (`teh,`) | FAIL (`teh,`) | FAIL (`teh,`) |
+| `teh ` + Backspace → `teh ` | n/a (`teh`: no fix to undo, Backspace deleted the space) | n/a (`teh`) | n/a (`teh`) |
+| `the bulid ` → `the build ` | PASS | PASS | PASS |
+| `the bulid,` → `the build,` | PASS | PASS | PASS |
+| `the bulid ` + Backspace → `the bulid ` | PASS | PASS | PASS |
+| Password, `teh ` and `the bulid ` unchanged | PASS | — | PASS (`Gtk.PasswordEntry`) |
+
+The GTK4 column is a small probe app (`Gtk.TextView`, app id
+`correctiond.probe`), the same text-input-v3 path as GNOME Text Editor.
+GNOME Text Editor itself was not driven.
+
+### Findings
+
+1. **`teh` is never corrected.** The trace shows `boundary no-candidate
+   silent allowed=…` for `teh` as a field's first word and after `the`,
+   `i` or `and`, in every app. A `corelib` unit test finds `the` as a
+   candidate for `teh`, but only on a small fixture dictionary. With the
+   shipped list, the margin rule rejects it (checked afterwards with a
+   probe that calls `decide` on `data/en_words.txt`): `the` scores −0.206
+   (swap, dl 0.70) and `ten` scores −0.035 (h→n, adjacent keys, dl 0.40).
+   The gap, 0.171, is below `MARGIN_FOCUSED` 0.3, so `decide` returns
+   nothing. `bulid`, `recieve`, `adn` and `hte` pass at 0.3. At
+   `MARGIN_OPEN` 0.6 none of the five words is corrected.
+   **Decision:** the plan and the README use `bulid` → `build` as the test
+   word. The undo check runs last, and `bulid` is forgotten afterwards.
+   Fixing `teh` in the scorer is deferred.
+2. **A Backspace undo blacklists the pair** (`engine/src/state.rs:182`,
+   `record_blacklist`). In the plan's order (space, undo, comma) the undo
+   check makes every later check with that word fail: our first run showed
+   `the bulid,` and all contenteditable checks as FAIL for this reason.
+   With an unlocked keyring the store is the encrypted `learn.db`, so the
+   blacklist may outlive `ibus restart` on the desktop. Do the undo check
+   last, and with a word that is not used later.
+3. Firefox `.deb` in contenteditable works the same as textarea, after the
+   blacklist effect is removed.
+
+### Still owed on the desktop (Firefox snap)
+
+On the live session (Ubuntu 26.04.1, GNOME 50.1, Firefox snap 159.0):
+1. Settings › Keyboard › Add Input Source: write down the exact entry text
+   and click path.
+2. Super+Space to it; `ibus engine` must print `correctiond:us`.
+3. Open Firefox; the Autocorrect menu probably says it is not in the app
+   list (`firefox_firefox`). Add `firefox_firefox` in Autocorrect Settings ›
+   Apps, then Restart engine. The menu must then say it corrects in
+   Firefox.
+4. In the plan's textarea and contenteditable pages: `the bulid ` →
+   `the build `, then `the bulid,` → `the build,`, then (last)
+   `the bulid ` + Backspace → `the bulid `. Password field: no change.
+5. If the snap fails where the `.deb` passed here, the cause is the snap's
+   IBus path. Check `journalctl --user -b | grep correctiond`.
+6. Afterwards, forget `bulid` (Quick Settings › Autocorrect, recent words)
+   so the test blacklist does not stay.
+
+### Desktop result (Firefox snap, 2026-11-08)
+
+On the desktop (GNOME Shell 50.1, Wayland, Firefox snap 159.0-1 rev 9136,
+engine `correctiond:colemak` built from 1675ac0, `firefox_firefox` already
+in the allowlist): the user reports that autocorrect works in snap
+Firefox. The snap's IBus path is therefore not a blocker, and the headline
+install flow and the default allowlist stay as planned.
+
+Not recorded: the result of each case (textarea, contenteditable, comma,
+password, undo), the exact Add Input Source text and click path, and
+whether `bulid` was forgotten afterwards. The engine journal had no
+correctiond lines for the test, so this entry rests on the user's report.

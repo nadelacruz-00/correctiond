@@ -23,19 +23,15 @@ import * as Dialog from 'resource:///org/gnome/shell/ui/dialog.js';
 import * as ModalDialog from 'resource:///org/gnome/shell/ui/modalDialog.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import * as QuickSettings from 'resource:///org/gnome/shell/ui/quickSettings.js';
-import {getInputSourceManager} from 'resource:///org/gnome/shell/ui/status/keyboard.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 
 import * as Lib from './lib.js';
+import {parseConfig} from './config.js';
+import {OskWatcher} from './osk.js';
 
 const BUS_NAME = 'org.nadelacruz.Correctiond1';
 const OBJECT_PATH = '/org/nadelacruz/Correctiond';
-const OSK_UUID = 'gjsosk@vishram1123.com';
 const ICON = 'tools-check-spelling-symbolic';
-// gjs-osk shows a new keyboard for ~100 ms before its constructor's close()
-// hides it, and a rebuild destroys and recreates an open keyboard: report
-// the OSK state only once it has held this long.
-const OSK_SETTLE_MS = 250;
 const CALL_TIMEOUT_MS = 2000;
 // Purge can wait behind an import, a flush or a keyring delete in the
 // engine, so it does not use CALL_TIMEOUT_MS. This is GDBus's own default
@@ -134,10 +130,6 @@ export default class CorrectiondCompanion extends Extension {
     enable() {
         this._logged = new Set();
         this._app = new Lib.Latch(null);
-        this._oskShown = new Lib.Latch(false);
-        this._restore = new Lib.SourceRestore();
-        this._ism = getInputSourceManager();
-        this._inputSettings = new Gio.Settings({schema_id: 'org.gnome.desktop.input-sources'});
 
         this._cancellable = new Gio.Cancellable();
         this._proxy = null;
@@ -165,21 +157,10 @@ export default class CorrectiondCompanion extends Extension {
         this._keyFocusId = global.stage.connect('notify::key-focus', () => this._sendApp());
         this._onFocus();
 
+        // Touch support: the OSK watcher exists only while touch is on.
         this._osk = null;
-        this._oskIds = [];
-        this._oskTimeoutId = 0;
-        this._containers = this._oskContainers().map(actor => ({
-            actor,
-            ids: [
-                actor.connect('child-added', (_a, child) => this._onChildAdded(child)),
-                actor.connect('child-removed', (_a, child) => this._onChildRemoved(child)),
-            ],
-        }));
-        this._extStateId = Main.extensionManager.connect('extension-state-changed', (_m, ext) => {
-            if (ext?.uuid === OSK_UUID)
-                this._scanOsk();
-        });
-        this._scanOsk();
+        this._touch = null;
+        this._setTouch(Lib.touchAfterRead(this._readConfig(), null, this._gjsOskInstalled()));
 
         this._indicator = new AutocorrectIndicator(this._correctionOn);
         this._toggleId = this._indicator.toggle.connect('notify::checked', toggle => {
@@ -235,29 +216,16 @@ export default class CorrectiondCompanion extends Extension {
         this._indicator.destroy();
         this._indicator = null;
 
-        Main.extensionManager.disconnect(this._extStateId);
-        for (const {actor, ids} of this._containers)
-            ids.forEach(id => actor.disconnect(id));
-        this._containers = [];
-        this._detachOsk();
-        if (this._oskTimeoutId) {
-            GLib.source_remove(this._oskTimeoutId);
-            this._oskTimeoutId = 0;
-        }
-        try {
-            this._restoreSource();
-        } catch (e) {
-            this._logOnce('input-source-restore', `input source restore failed: ${e.message}`);
-        }
+        // Restores a switched input source; the engine hears the OSK is gone.
+        this._setTouch(false);
+        this._touch = null;
 
         global.display.disconnect(this._focusId);
         global.stage.disconnect(this._keyFocusId);
         this._setFocusWindow(null);
 
         // Without the extension the engine must see what "not running" means:
-        // no app identified, no OSK. The on/off choice is left as it is.
-        if (this._oskShown.value)
-            this._send('SetOskVisible', false);
+        // no app identified, no OSK (sent by _setTouch(false) above). The on/off choice is left as it is.
         this._send('SetFocusedApp', '');
 
         this._cancellable.cancel();
@@ -270,8 +238,6 @@ export default class CorrectiondCompanion extends Extension {
             GLib.source_remove(this._subtitleId);
             this._subtitleId = 0;
         }
-        this._ism = null;
-        this._inputSettings = null;
         this._logged = null;
     }
 
@@ -287,7 +253,7 @@ export default class CorrectiondCompanion extends Extension {
         this._logged.clear();
         this._app = new Lib.Latch(null);
         this._sendApp();
-        this._send('SetOskVisible', this._oskShown.value);
+        this._send('SetOskVisible', this._osk?.shown ?? false);
         this._send('SetEnabled', this._correctionOn);
     }
 
@@ -372,127 +338,70 @@ export default class CorrectiondCompanion extends Extension {
             this._send('SetFocusedApp', app);
     }
 
-    // --- GJS OSK ---
+    // --- touch support (GJS OSK) ---
 
-    /** Where gjs-osk puts its keyboard: Main.uiGroup (Shell 50), or the
-     * input panel group, which it moves to on Shell 51. */
-    _oskContainers() {
-        const containers = [Main.layoutManager.uiGroup];
-        const panelGroup = Main.layoutManager.keyboardBox?.get_parent();
-        if (panelGroup && !containers.includes(panelGroup))
-            containers.push(panelGroup);
-        return containers;
-    }
-
-    _scanOsk() {
-        let found = null;
-        for (const {actor} of this._containers) {
-            found = actor.get_children().find(c => Lib.isGjsOskActor(c)) ?? null;
-            if (found)
-                break;
-        }
-        if (found !== this._osk) {
-            this._detachOsk();
-            if (found)
-                this._attachOsk(found);
-        }
-        this._queueOskUpdate();
-    }
-
-    _onChildAdded(child) {
-        if (child !== this._osk && Lib.isGjsOskActor(child)) {
-            this._detachOsk();
-            this._attachOsk(child);
-            this._queueOskUpdate();
-        }
-    }
-
-    _onChildRemoved(child) {
-        if (child === this._osk)
-            this._scanOsk(); // a move to another container, or gone
-    }
-
-    _attachOsk(actor) {
-        this._osk = actor;
-        this._oskIds = [
-            actor.connect('notify::visible', () => this._queueOskUpdate()),
-            actor.connect('notify::mapped', () => this._queueOskUpdate()),
-            actor.connect('destroy', () => {
-                this._detachOsk();
-                this._queueOskUpdate();
-            }),
-        ];
-    }
-
-    _detachOsk() {
-        if (this._osk)
-            this._oskIds.forEach(id => this._osk.disconnect(id));
-        this._osk = null;
-        this._oskIds = [];
-    }
-
-    _queueOskUpdate() {
-        if (this._oskTimeoutId)
-            GLib.source_remove(this._oskTimeoutId);
-        this._oskTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, OSK_SETTLE_MS, () => {
-            this._oskTimeoutId = 0;
-            this._updateOsk();
-            return GLib.SOURCE_REMOVE;
-        });
-    }
-
-    _updateOsk() {
-        const shown = Lib.oskShowing(this._osk);
-        if (!this._oskShown.set(shown))
-            return;
-        this._send('SetOskVisible', shown);
-        try {
-            if (shown)
-                this._switchForOsk();
-            else
-                this._restoreSource();
-        } catch (e) {
-            this._logOnce('input-source', `input source switch failed: ${e.message}`);
-        }
-    }
-
-    // --- input source auto-switch ---
-
-    /** The engine to use while the OSK is up ('' = none), read each time. */
-    _oskSource() {
+    /** config.toml as {kind:'missing'} | {kind:'invalid'} |
+     * {kind:'ok', touch, oskSource}. Never logs the file's contents. */
+    _readConfig() {
         const path = GLib.build_filenamev([GLib.get_home_dir(), '.config', 'correctiond', 'config.toml']);
+        let text;
         try {
-            const [, bytes] = GLib.file_get_contents(path);
-            return Lib.parseOskSource(new TextDecoder().decode(bytes));
+            [, text] = GLib.file_get_contents(path);
+            text = new TextDecoder().decode(text);
         } catch (e) {
-            return Lib.parseOskSource(null); // missing or unreadable: the default
+            return {kind: 'missing'}; // missing or unreadable
+        }
+        try {
+            const parsed = parseConfig(text);
+            if (!parsed.ok)
+                return {kind: 'invalid'};
+            return {kind: 'ok', touch: parsed.config.modules.touch, oskSource: parsed.config.oskSource};
+        } catch (e) {
+            return {kind: 'invalid'};
         }
     }
 
-    _switchForOsk() {
-        // Read now: both can change at runtime.
-        const engine = this._oskSource();
-        const decision = Lib.autoSwitchDecision(engine, this._inputSettings.get_boolean('per-window'));
-        if (decision === 'per-window')
-            this._logOnce('per-window', `per-window input sources are on; not switching to ${engine} ` +
-                'while the OSK is up');
-        if (decision !== 'switch')
-            return;
-        const sources = this._ism.inputSources;
-        const target = Lib.findSource(sources, Lib.sourceKey({type: 'ibus', id: engine}));
-        if (!target) {
-            this._logOnce(`missing:${engine}`, `${engine} is not an input source; not switching`);
-            return;
-        }
-        if (this._restore.shown(Lib.sourceKey(this._ism.currentSource), Lib.sourceKey(target)))
-            target.activate(false);
+    _gjsOskInstalled() {
+        const dirs = [GLib.get_user_data_dir(), ...GLib.get_system_data_dirs()];
+        return Lib.gjsOskInstalledIn(dirs,
+            path => GLib.file_test(path, GLib.FileTest.IS_DIR));
     }
 
-    _restoreSource() {
-        if (!this._restore.pending)
-            return;
-        const key = this._restore.hidden(Lib.sourceKey(this._ism.currentSource));
-        Lib.findSource(this._ism.inputSources, key)?.activate(false);
+    /** Builds or tears down the OSK watcher (synchronously). */
+    _setTouch(on) {
+        this._touch = on;
+        if (on && !this._osk) {
+            try {
+                const osk = new OskWatcher({
+                    onChange: shown => this._send('SetOskVisible', shown),
+                    logOnce: (key, msg) => this._logOnce(key, msg),
+                    // The US engine when config.toml is missing or invalid.
+                    readOskSource: () => {
+                        const read = this._readConfig();
+                        return read.kind === 'ok' ? read.oskSource : Lib.QWERTY_ENGINE;
+                    },
+                });
+                try {
+                    osk.enable();
+                } catch (e) {
+                    try {
+                        osk.disable(); // drop what enable() connected
+                    } catch (_e) { /* the first error is the one to report */ }
+                    throw e;
+                }
+                this._osk = osk;
+            } catch (e) {
+                this._osk = null;
+                this._logOnce('osk-construct',
+                    `osk.js could not be loaded (${e.message}); no on-screen keyboard support`);
+                logError(e);
+            }
+        } else if (!on && this._osk) {
+            const osk = this._osk;
+            this._osk = null;
+            if (osk.disable())
+                this._send('SetOskVisible', false);
+        }
     }
 
     // --- menu ---

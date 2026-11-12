@@ -17,37 +17,6 @@ const ACCESS_DENIED = 'org.freedesktop.DBus.Error.AccessDenied';
  * (engine/src/persist.rs FILES_FAILED). */
 const ENGINE_FILES_FAILED = 'learned data files could not be removed';
 
-const OSK_SOURCE_LINE = /^\s*osk_source\s*=\s*"([^"\\]*)"\s*$/;
-const AUTO_SWITCH_LINE = /^\s*auto_switch_osk\s*=\s*(true|false)\s*$/;
-
-/**
- * The IBus engine to switch to while GJS OSK is open, from config.toml text,
- * without a TOML parser: a top-level `osk_source = "<engine>"` line, where
- * "" means no switch. Older files say `auto_switch_osk = true|false` instead
- * (true = the US engine, false = no switch); osk_source wins when both are
- * there. Missing file or key ⇒ the US engine, the original default. A
- * trailing `#` comment is allowed; keys after a table header are ignored.
- *
- * @param {string|null} text
- * @returns {string} an IBus engine name, or '' for no switch
- */
-export function parseOskSource(text) {
-    let legacy = null;
-    for (const raw of (text ?? '').split('\n')) {
-        // Neither key's value can contain '#', so a plain cut is safe.
-        const line = raw.split('#')[0];
-        if (/^\s*\[/.test(line))
-            break; // a table header: later keys are not top-level
-        const m = OSK_SOURCE_LINE.exec(line);
-        if (m)
-            return m[1];
-        const old = AUTO_SWITCH_LINE.exec(line);
-        if (old)
-            legacy = old[1] === 'true';
-    }
-    return legacy === false ? '' : QWERTY_ENGINE;
-}
-
 /**
  * Whether to switch input source when the OSK shows. With per-window input
  * sources the Shell would save the switched source as the focused window's
@@ -55,7 +24,7 @@ export function parseOskSource(text) {
  * afterwards: no switch then (the engine still gets SetOskVisible and uses
  * the OSK tap model).
  *
- * @param {string} target - parseOskSource(): an engine name, '' for none
+ * @param {string} target - the OSK source: an engine name, '' for none
  * @param {boolean} perWindow - org.gnome.desktop.input-sources per-window
  * @returns {'switch'|'off'|'per-window'}
  */

@@ -4,7 +4,6 @@
 import System from 'system';
 import GLib from 'gi://GLib';
 import {
-    parseOskSource,
     autoSwitchDecision,
     normalizeWmClass,
     focusedApp,
@@ -62,47 +61,7 @@ function test(name, fn) {
     }
 }
 
-// --- config: osk_source (and the older auto_switch_osk) ---
-
 const COLEMAK = 'correctiond:colemak';
-
-test('missing or empty config switches to the US engine (the old default)', () => {
-    eq(parseOskSource(null), QWERTY_ENGINE, 'null');
-    eq(parseOskSource(''), QWERTY_ENGINE, 'empty');
-});
-
-test('osk_source names the source, or "" for none', () => {
-    eq(parseOskSource('osk_source = "correctiond:colemak"\n'), COLEMAK, 'colemak');
-    eq(parseOskSource('osk_source="correctiond:us"'), QWERTY_ENGINE, 'no spaces');
-    eq(parseOskSource('  osk_source  =  ""  \r\n'), '', 'none, padding, CRLF');
-    eq(parseOskSource('osk_source = "correctiond:colemak" # tablet\n'), COLEMAK, 'comment');
-});
-
-test('osk_source wins over the older auto_switch_osk', () => {
-    eq(parseOskSource('auto_switch_osk = true\nosk_source = "correctiond:colemak"\n'), COLEMAK, 'after');
-    eq(parseOskSource('osk_source = ""\nauto_switch_osk = true\n'), '', 'before');
-});
-
-test('older configs: auto_switch_osk true means US, false means none', () => {
-    eq(parseOskSource('auto_switch_osk = true\n'), QWERTY_ENGINE, 'true');
-    eq(parseOskSource('auto_switch_osk = false\n'), '', 'false');
-    eq(parseOskSource('auto_switch_osk = false # off\n'), '', 'comment');
-    eq(parseOskSource('# auto_switch_osk = false\n'), QWERTY_ENGINE, 'commented out');
-    eq(parseOskSource('auto_switch_osk = "false"\n'), QWERTY_ENGINE, 'not a boolean');
-});
-
-test('other keys, prefixes and odd values do not match', () => {
-    eq(parseOskSource('xosk_source = ""\n'), QWERTY_ENGINE, 'prefix');
-    eq(parseOskSource('osk_source_extra = ""\n'), QWERTY_ENGINE, 'suffix');
-    eq(parseOskSource('osk_source = correctiond:colemak\n'), QWERTY_ENGINE, 'unquoted');
-    eq(parseOskSource('osk_source = "a\\"b"\n'), QWERTY_ENGINE, 'escape');
-    eq(parseOskSource('allowlist = ["firefox"]\nosk_source = ""\n'), '', 'after other key');
-});
-
-test('only top-level keys count, not keys inside a table', () => {
-    eq(parseOskSource('[[languages]]\ncode = "en"\nosk_source = ""\n'), QWERTY_ENGINE, 'in table');
-    eq(parseOskSource('osk_source = ""\n[[languages]]\ncode = "en"\n'), '', 'before table');
-});
 
 test('auto-switch decision: config on, global sources', () => {
     eq(autoSwitchDecision(COLEMAK, false), 'switch', 'switch');

@@ -16,7 +16,7 @@ grep -q "\"uuid\": \"$uuid\"" "$src/metadata.json"
 mkdir -p "$dest"
 # Both license files too: metadata.json has no license field.
 install -m 0644 "$src/metadata.json" "$src/extension.js" "$src/lib.js" \
-    "$src/config.js" "$src/prefs.js" "$src/prefsWindow.js" "$src/wordsPage.js" \
+    "$src/config.js" "$src/osk.js" "$src/prefs.js" "$src/prefsWindow.js" "$src/wordsPage.js" \
     "$repo/LICENSE-MIT" "$repo/LICENSE-APACHE" "$dest/"
 echo "installed $dest"
 

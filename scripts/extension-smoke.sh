@@ -9,7 +9,11 @@
 # Scenario 1: engine up first, GJS OSK enabled; open and close the OSK
 #   through gjs-osk's own `opened` setting; disable and re-enable us.
 # Scenario 2: no GJS OSK; the engine appears 4 s after the shell.
-# Both then drive the Quick Settings menu through org.gnome.Shell.Eval (the
+# Scenario 3 (touch-off): GJS OSK enabled, but config.toml says
+#   [modules] touch = false: no OSK watcher, nothing reported.
+# Scenario 4 (late-osk): GJS OSK is installed but enabled only 3 s after us
+#   (load order): the keyboard is still seen.
+# Scenarios 1 and 2 then drive the Quick Settings menu through org.gnome.Shell.Eval (the
 # test-only helper extension scripts/smoke-unsafe@correctiond.test turns on
 # unsafe mode, which Eval needs; it is installed only in the temp HOME):
 # toggle, learning switch, a recent word's forget button, the companion's
@@ -251,6 +255,32 @@ if [[ "${1:-}" == --inner ]]; then
         sleep 0.5
     done
     sleep 2
+    case "${SMOKE_SCENARIO:-full}" in
+    touch-off)
+        mark open; toggle_osk; sleep 2
+        ev touch-off-null "$(js "if (e._osk !== null) throw new Error('an OSK watcher exists')")"
+        mark close; toggle_osk; sleep 2
+        mark end
+        kill -INT "$shell"; wait "$shell" || true
+        kill "$fake" "$sysbus" 2>/dev/null || true
+        exit 0 ;;
+    late-osk)
+        sleep 1 # 3 s after the companion started, give or take
+        ev late-osk-watcher "$(js "if (e._osk === null) throw new Error('no watcher: touch is off')")"
+        mark enable-osk
+        ev late-osk-enable "$(js "Main.extensionManager.enableExtension('$osk_uuid')")"; sleep 3
+        mark open; toggle_osk; sleep 2
+        mark close; toggle_osk; sleep 2
+        mark end
+        kill -INT "$shell"; wait "$shell" || true
+        kill "$fake" "$sysbus" 2>/dev/null || true
+        exit 0 ;;
+    esac
+    if [[ "${SMOKE_WITH_OSK:-0}" == 0 ]]; then
+        ev osk-null "$(js "if (e._osk !== null) throw new Error('an OSK watcher exists')")"
+    else
+        ev osk-watcher "$(js "if (e._osk === null) throw new Error('no OSK watcher')")"
+    fi
     mark open; toggle_osk; sleep 2
     mark close; toggle_osk; sleep 2
     mark disable; ext DisableExtension; sleep 1
@@ -445,23 +475,54 @@ if [[ "${1:-}" == --inner ]]; then
     wait_gone "$prefs"
     ev prefs-dropped "$(js "if (e._wordClients.size !== 0) throw new Error(String(e._wordClients.size))")"
     kill "$prefs" 2>/dev/null || true
+    # Disable, enable and disable with no wait: no watcher, no timer left.
+    mark rapid; ext DisableExtension; ext EnableExtension; ext DisableExtension; sleep 1
+    rapid_js="(() => { const e = Main.extensionManager.lookup('$uuid').stateObj; "
+    rapid_js+="if (e._osk !== null) throw new Error('an OSK watcher is left'); return 'ok'; })()"
+    ev rapid-osk-null "$rapid_js"; sleep 1
     mark end
     kill -INT "$shell"; wait "$shell" || true
     kill "$fake" "$sysbus" "${prefs:-}" 2>/dev/null || true
     exit 0
 fi
 
-# run_one NAME WITH_OSK FAKE_DELAY: leaves calls.log and shell.log in $out/NAME
+# A copy of /usr/share as symlinks without gjs-osk: XDG_DATA_DIRS for the
+# scenarios where gjs-osk must not count as installed (touch derives off).
+hide_osk_share() { # hide_osk_share DIR
+    local sh=$1 d b
+    mkdir -p "$sh/gnome-shell/extensions"
+    for d in /usr/share/*; do
+        b=${d##*/}; [[ "$b" == gnome-shell ]] || ln -s "$d" "$sh/$b"
+    done
+    for d in /usr/share/gnome-shell/*; do
+        b=${d##*/}; [[ "$b" == extensions ]] || ln -s "$d" "$sh/gnome-shell/$b"
+    done
+    for d in /usr/share/gnome-shell/extensions/*; do
+        b=${d##*/}; [[ "$b" == "$osk_uuid" ]] || ln -s "$d" "$sh/gnome-shell/extensions/$b"
+    done
+}
+
+# run_one NAME WITH_OSK FAKE_DELAY [CONFIG_TOML [SCENARIO]]: leaves calls.log and
+# shell.log in $out/NAME. WITH_OSK: 1 = gjs-osk enabled, 0 = not installed,
+# 2 = installed, enabled by the scenario later.
 run_one() {
-    local name=$1 with_osk=$2 delay=$3
+    local name=$1 with_osk=$2 delay=$3 config=${4:-} scenario=${5:-full}
     local tmp; tmp="$(mktemp -d /tmp/ccx.XXXXXX)" # short: Wayland socket paths max 108 bytes
     local home="$tmp/home" dir="$out/$name"
     mkdir -p "$home/.config/glib-2.0/settings" "$home/.local/share/gnome-shell/extensions/$uuid" \
         "$home/.cache" "$home/.local/state" "$tmp/run" "$dir"
     chmod 700 "$tmp/run"
+    local data_dirs=/usr/local/share:/usr/share
+    if [[ "$with_osk" == 0 ]]; then
+        hide_osk_share "$tmp/share"; data_dirs="$tmp/share:/usr/local/share"
+    fi
+    if [[ -n "$config" ]]; then
+        mkdir -p "$home/.config/correctiond"; printf '%s\n' "$config" > "$home/.config/correctiond/config.toml"
+    fi
     local extdir="$home/.local/share/gnome-shell/extensions/$uuid"
     install -m 0644 "$repo/extension/metadata.json" "$repo/extension/extension.js" \
-        "$repo/extension/lib.js" "$repo/extension/config.js" "$repo/extension/prefsWindow.js" \
+        "$repo/extension/lib.js" "$repo/extension/config.js" "$repo/extension/osk.js" \
+        "$repo/extension/prefsWindow.js" \
         "$repo/extension/wordsPage.js" "$repo/LICENSE-MIT" "$repo/LICENSE-APACHE" "$extdir/"
     # The Settings window's driver: temp HOME only, around the real prefs.js.
     install -m 0644 "$repo/extension/prefs.js" "$extdir/prefs-real.js"
@@ -477,6 +538,7 @@ run_one() {
     env -i PATH="$PATH" LANG=C.UTF-8 HOME="$home" \
         XDG_CONFIG_HOME="$home/.config" XDG_DATA_HOME="$home/.local/share" \
         XDG_CACHE_HOME="$home/.cache" XDG_STATE_HOME="$home/.local/state" \
+        XDG_DATA_DIRS="$data_dirs" SMOKE_SCENARIO="$scenario" SMOKE_WITH_OSK="$with_osk" \
         XDG_RUNTIME_DIR="$tmp/run" GSETTINGS_BACKEND=keyfile \
         GIO_USE_VFS=local GVFS_DISABLE_FUSE=1 \
         SMOKE_DIR="$dir" FAKE_DELAY="$delay" \
@@ -655,6 +717,12 @@ check osk "re-enable pushes state" between osk enable toggle-off "SetEnabled (Tr
 menu_checks osk
 words_checks osk
 prefs_checks osk
+check osk "touch derives on: the watcher exists" eval_ok osk osk-watcher
+check osk "rapid disable, enable, disable leaves no watcher" eval_ok osk rapid-osk-null
+check osk "no SetOskVisible(true) after the rapid cycle" \
+    [ "$(count osk rapid end 'SetOskVisible (True,)')" = 0 ]
+check osk "at most one SetOskVisible(false) after the rapid cycle" \
+    [ "$(count osk rapid end 'SetOskVisible (False,)')" -le 1 ]
 check osk "no stack trace through the extension" no_trace osk
 
 run_one no-osk 0 4
@@ -662,13 +730,30 @@ check no-osk "shell started, engine reached" loaded no-osk
 check no-osk "state pushed when the engine appears" before no-osk open "SetEnabled (True,)"
 check no-osk "never SetOskVisible(true) without gjs-osk" \
     bash -c "! grep -qF 'SetOskVisible (True,)' '$out/no-osk/calls.log'"
+check no-osk "no OSK watcher without gjs-osk" eval_ok no-osk osk-null
 menu_checks no-osk
 words_checks no-osk
 prefs_checks no-osk
 check no-osk "no stack trace through the extension" no_trace no-osk
 
+run_one touch-off 1 0 $'[modules]\ntouch = false' touch-off
+check touch-off "shell started, engine reached" loaded touch-off
+check touch-off "no OSK watcher with touch = false" eval_ok touch-off touch-off-null
+check touch-off "never SetOskVisible(true) with touch = false" \
+    bash -c "! grep -qF 'SetOskVisible (True,)' '$out/touch-off/calls.log'"
+check touch-off "every Eval succeeded" bash -c "! grep -q '^EVAL-FAILED' '$out/touch-off/calls.log'"
+check touch-off "no stack trace through the extension" no_trace touch-off
+
+run_one late-osk 2 0 '' late-osk
+check late-osk "shell started, engine reached" loaded late-osk
+check late-osk "touch is on at start (gjs-osk is installed)" eval_ok late-osk late-osk-watcher
+check late-osk "OSK enabled after us is reported" between late-osk open close "SetOskVisible (True,)"
+check late-osk "OSK close reported" between late-osk close end "SetOskVisible (False,)"
+check late-osk "every Eval succeeded" bash -c "! grep -q '^EVAL-FAILED' '$out/late-osk/calls.log'"
+check late-osk "no stack trace through the extension" no_trace late-osk
+
 if [[ "$fail" != 0 ]]; then
-    for n in osk no-osk; do
+    for n in osk no-osk touch-off late-osk; do
         echo "== $n/calls.log"; cat "$out/$n/calls.log" 2>/dev/null || true
         echo "== $n/shell.log (extension lines)"
         grep -n -B4 "correctiond\|$uuid" "$out/$n/shell.log" 2>/dev/null || true

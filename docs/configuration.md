@@ -8,9 +8,10 @@ Settings) edits it for you; this page is the reference for editing it by hand.
 
 - The engine reads the file once, when it starts. After a change, restart it
   with Settings, General, Restart engine, or `ibus restart`.
-- The extension reads `[modules] touch`, `osk_source` (and the older
-  `auto_switch_osk`) each time GJS OSK opens, so those take effect without a
-  restart.
+- The extension watches the file, so `[modules] touch` applies live, a moment
+  after the file is saved, with no restart. It also reads the file when it
+  turns on. It reads `osk_source` (and the older `auto_switch_osk`) each time
+  GJS OSK opens, so those also take effect without a restart.
 - A missing file means defaults. An unreadable or invalid file also means
   defaults, and the engine prints one line to the journal
   (`correctiond: config.toml is invalid, using defaults`). Nothing in the file

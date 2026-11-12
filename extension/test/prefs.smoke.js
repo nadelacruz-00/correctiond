@@ -13,10 +13,20 @@ import System from 'system';
 
 import {currentSource, fillWindow, fmtRate, legacyLangs, lexiconStatus, loadReport} from '../prefsWindow.js';
 import {DEFAULT_ALLOWLIST, parseConfig} from '../config.js';
-import {SORTS} from '../lib.js';
+import {SETUP_TEXT, SORTS} from '../lib.js';
 import {rowSubtitle} from '../wordsPage.js';
 
 Adw.init();
+
+// Runs the main loop for `ms`, so stub promises settle and timers fire.
+const spin = ms => {
+    const l = new GLib.MainLoop(null, false);
+    GLib.timeout_add(GLib.PRIORITY_DEFAULT, ms, () => {
+        l.quit();
+        return GLib.SOURCE_REMOVE;
+    });
+    l.run();
+};
 
 let failures = 0;
 let passed = 0;
@@ -145,6 +155,159 @@ check(read(odd) === 'allowlist = ["firefox"]\ntypo_key = true\n', 'read-only fil
     check(currentSource(stub({'mru-sources': [], sources: [['ibus', 'a'], ['ibus', 'z']]}))?.join() === 'ibus,a',
         'currentSource falls back to sources[0]');
     check(currentSource(stub({'mru-sources': [], sources: []})) === null, 'currentSource is null with none');
+}
+
+// First-run setup guidance in the Status group. GetStats, the component probe and
+// the input sources are all stubbed: no bus call, and no write to the real keys.
+{
+    const fakeSettings = (sources, mru) => {
+        const data = {sources, 'mru-sources': mru};
+        const handlers = new Map();
+        let next = 1;
+        return {
+            data,
+            get_value: k => ({deepUnpack: () => data[k]}),
+            connect: (sig, fn) => {
+                handlers.set(next, {sig, fn});
+                return next++;
+            },
+            disconnect: id => handlers.delete(id),
+            emit: sig => [...handlers.values()].filter(h => h.sig === sig).forEach(h => h.fn()),
+            handlerCount: () => handlers.size,
+        };
+    };
+    const OURS = ['ibus', 'correctiond:us'];
+    const OTHER = ['xkb', 'us'];
+    const failing = cb => cb(new Error('no owner'));
+    const statsOk = cb => cb(null, JSON.stringify(
+        {words_learned: 7, persistent: true, corrections: 2}));
+    const spath = GLib.build_filenamev([dir, 'setup.toml']);
+    const setupWin = extra => {
+        const win = newWindow();
+        const c = fillWindow(win, {
+            configPath: spath, restartArgv: ['true'], apps, dataDir: noData,
+            statsCall: failing, componentProbe: () => true,
+            inputSettings: fakeSettings([OURS], [OURS]), ...extra,
+        });
+        return {win, c};
+    };
+    const TEXT = state => SETUP_TEXT.settings[state];
+
+    let {c} = setupWin({componentProbe: () => false, inputSettings: fakeSettings([], [])});
+    check(c.statusRow.subtitle === TEXT('no-engine'), `no-engine subtitle: ${c.statusRow.subtitle}`);
+    check(c.getEngineLink.visible && c.getEngineLink.label === 'Get the engine' &&
+        c.getEngineLink.uri === 'https://github.com/nadelacruz-00/correctiond#install', 'no-engine: Get the engine link');
+    check(c.restartRow.sensitive === false, 'no-engine: Restart row insensitive');
+    check(!c.keyboardButton.visible && !c.reportLink.visible, 'no-engine: no other controls');
+    check(c.statusRow.get_last_child() !== null, 'status row has children');
+
+    ({c} = setupWin({inputSettings: fakeSettings([OTHER], [OTHER]), keyboardAppInfo: {}}));
+    check(c.statusRow.subtitle === TEXT('no-source'), `no-source subtitle: ${c.statusRow.subtitle}`);
+    check(c.keyboardButton.visible && c.keyboardButton.label === 'Open Keyboard Settings',
+        'no-source: keyboard button visible');
+    check(c.restartRow.subtitle === 'Makes a newly installed engine show up in the input source list',
+        'no-source: Restart row subtitle');
+    check(c.restartRow.sensitive === true && !c.getEngineLink.visible, 'no-source: Restart row sensitive');
+
+    // Keyboard button: launch result and toast.
+    {
+        const toasts = [];
+        const win = newWindow();
+        win.add_toast = t => toasts.push(t.title);
+        let launched = 0;
+        const k = fillWindow(win, {
+            configPath: spath, restartArgv: ['true'], apps, dataDir: noData, statsCall: failing,
+            componentProbe: () => true, inputSettings: fakeSettings([OTHER], [OTHER]),
+            keyboardAppInfo: {}, launchKeyboardPanel: () => { launched++; return true; },
+        });
+        k.keyboardButton.emit('clicked');
+        check(launched === 1 && toasts.length === 0, 'keyboard button launches, no toast on success');
+        const w2 = newWindow();
+        w2.add_toast = t => toasts.push(t.title);
+        const k2 = fillWindow(w2, {
+            configPath: spath, restartArgv: ['true'], apps, dataDir: noData, statsCall: failing,
+            componentProbe: () => true, inputSettings: fakeSettings([OTHER], [OTHER]),
+            keyboardAppInfo: {}, launchKeyboardPanel: () => false,
+        });
+        k2.keyboardButton.emit('clicked');
+        check(toasts.join() === "Couldn't open Keyboard Settings. Open Settings \u203a Keyboard \u203a Input Sources yourself.",
+            `keyboard failure toast: ${toasts.join()}`);
+        const w3 = newWindow();
+        w3.add_toast = t => toasts.push(t.title);
+        const k3 = fillWindow(w3, {
+            configPath: spath, restartArgv: ['true'], apps, dataDir: noData, statsCall: failing,
+            componentProbe: () => true, inputSettings: fakeSettings([OTHER], [OTHER]),
+            keyboardAppInfo: {}, launchKeyboardPanel: () => { throw new Error('boom'); },
+        });
+        k3.keyboardButton.emit('clicked');
+        check(toasts.length === 2, 'keyboard launch that throws also toasts');
+    }
+    ({c} = setupWin({inputSettings: fakeSettings([OTHER], [OTHER]), keyboardAppInfo: null}));
+    check(c.statusRow.subtitle === TEXT('no-source') && !c.keyboardButton.visible,
+        'keyboard button hidden without app info');
+
+    // paused, then switching source re-probes (mru-sources).
+    const sw = fakeSettings([OURS, OTHER], [OTHER, OURS]);
+    ({c} = setupWin({inputSettings: sw, setupWaitMs: 100}));
+    check(c.statusRow.subtitle === TEXT('paused'), `paused subtitle: ${c.statusRow.subtitle}`);
+    sw.data['mru-sources'] = [OURS, OTHER];
+    sw.emit('changed::mru-sources');
+    check(c.statusRow.subtitle === TEXT('starting'), `re-probe on mru-sources change: ${c.statusRow.subtitle}`);
+    sw.data['mru-sources'] = [OTHER, OURS];
+    sw.emit('changed::sources');
+    check(c.statusRow.subtitle === TEXT('paused'), 're-probe on sources change');
+
+    // starting, then failed after one wait; Report appears only after a Restart.
+    {
+        const win = newWindow();
+        const set = fakeSettings([OURS], [OURS]);
+        let probes = 0;
+        const f = fillWindow(win, {
+            configPath: spath, restartArgv: ['true'], apps, dataDir: noData,
+            statsCall: cb => { probes++; failing(cb); }, componentProbe: () => true,
+            inputSettings: set, setupWaitMs: 150,
+        });
+        check(f.statusRow.subtitle === 'Starting\u2026', `starting: ${f.statusRow.subtitle}`);
+        check(!f.reportLink.visible, 'starting: no report link');
+        spin(400);
+        check(f.statusRow.subtitle === TEXT('failed'), `failed after the wait: ${f.statusRow.subtitle}`);
+        check(probes === 2, `exactly one timed re-probe (${probes})`);
+        check(f.reportLink.visible === false && f.reportLink.label === 'Report a problem' &&
+            f.reportLink.uri === 'https://github.com/nadelacruz-00/correctiond/issues/new?template=bug.yml',
+        'failed: report link hidden before a Restart');
+        f.restartEngine();
+        f.refreshStatus();
+        check(f.restartedWhileFailed && f.reportLink.visible, 'failed after Restart: report link visible');
+        check(set.handlerCount() === 2, 'two input-source handlers connected');
+        win.emit('close-request');
+        check(set.handlerCount() === 0, 'close disconnects the input-source handlers');
+        spin(50);
+    }
+
+    // The timer is removed on close.
+    {
+        const win = newWindow();
+        let probes = 0;
+        fillWindow(win, {
+            configPath: spath, restartArgv: ['true'], apps, dataDir: noData,
+            statsCall: cb => { probes++; failing(cb); }, componentProbe: () => true,
+            inputSettings: fakeSettings([OURS], [OURS]), setupWaitMs: 100,
+        });
+        win.emit('close-request');
+        spin(300);
+        check(probes === 1, `no re-probe after close (${probes})`);
+    }
+
+    // Live status adds the Corrects in line.
+    const ffApps = [...apps, {id: 'firefox', name: 'Firefox', icon: null}];
+    const liveCfg = GLib.build_filenamev([dir, 'live.toml']);
+    GLib.file_set_contents(liveCfg, 'allowlist = ["firefox"]\n');
+    ({c} = setupWin({configPath: liveCfg, apps: ffApps, statsCall: statsOk}));
+    check(c.statusRow.subtitle.startsWith('Running. 7 words learned, saved encrypted.') &&
+        c.statusRow.subtitle.endsWith('Corrects in: Firefox. Add apps on the Apps page.'),
+    `live status: ${c.statusRow.subtitle}`);
+    check(!c.getEngineLink.visible && !c.keyboardButton.visible && !c.reportLink.visible &&
+        c.restartRow.sensitive, 'live status: no setup controls');
 }
 
 // Lexicon status.
@@ -279,15 +442,6 @@ check(val(ctl, 'Waray and Taglish words changed') === 'n/a (before: n/a)', 'abse
 
 // --- Words page: always a stub wordsCalls, never a bus ---
 
-// Runs the main loop for `ms`, so stub promises settle and timers fire.
-const spin = ms => {
-    const l = new GLib.MainLoop(null, false);
-    GLib.timeout_add(GLib.PRIORITY_DEFAULT, ms, () => {
-        l.quit();
-        return GLib.SOURCE_REMOVE;
-    });
-    l.run();
-};
 const NOW_S = Math.floor(Date.now() / 1000);
 const stubRows = () => [
     {word: 'kadto', count: 41, lastSeen: NOW_S, personal: true},

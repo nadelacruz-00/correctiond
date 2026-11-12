@@ -406,3 +406,115 @@ export class PendingForget {
         return this.#words.size;
     }
 }
+
+// --- touch module and first-run guidance (pure; I/O lives in the callers) ---
+
+export const GJS_OSK_UUID = 'gjsosk@vishram1123.com';
+
+/**
+ * The touch switch value: the explicit config value, else whether gjs-osk is installed.
+ * @param {boolean|null} parsed
+ * @param {boolean} installed
+ * @returns {boolean}
+ */
+export function effectiveTouch(parsed, installed) {
+    return parsed ?? installed;
+}
+
+/**
+ * Touch value after (re)reading the config file.
+ * @param {{kind: 'missing'}|{kind: 'invalid'}|{kind: 'ok', touch: boolean|null}} read
+ * @param {boolean|null} current the value in force (null at enable())
+ * @param {boolean} installed
+ * @returns {boolean}
+ */
+export function touchAfterRead(read, current, installed) {
+    if (read.kind === 'ok')
+        return effectiveTouch(read.touch, installed);
+    if (read.kind === 'invalid')
+        return current ?? installed;
+    return installed;
+}
+
+/**
+ * @param {string[]} dataDirs
+ * @param {(path: string) => boolean} isDir
+ * @returns {boolean}
+ */
+export function gjsOskInstalledIn(dataDirs, isDir) {
+    return dataDirs.some(d => isDir(`${d}/gnome-shell/extensions/${GJS_OSK_UUID}`));
+}
+
+/**
+ * @param {string|null} ibusComponentPath colon-separated IBUS_COMPONENT_PATH
+ * @returns {string[]}
+ */
+export function componentDirs(ibusComponentPath) {
+    const extra = (ibusComponentPath ?? '').split(':').filter(e => e !== '');
+    return ['/usr/share/ibus/component', ...extra];
+}
+
+/**
+ * @param {string[]} dirs
+ * @param {(path: string) => boolean} isFile
+ * @returns {boolean}
+ */
+export function componentInstalledIn(dirs, isFile) {
+    return dirs.some(d => isFile(`${d}/correctiond.xml`));
+}
+
+export const SETUP_WAIT_MS = 5000;
+
+/**
+ * First-run state, evaluated in order (spec 8.1).
+ * @param {{componentInstalled: boolean, sourceConfigured: boolean, sourceCurrent: boolean,
+ *   engineOwned: boolean, ownerWaitExpired: boolean}} p
+ * @returns {null|'no-engine'|'no-source'|'paused'|'starting'|'failed'}
+ */
+export function setupState(p) {
+    if (p.engineOwned)
+        return null;
+    if (!p.componentInstalled)
+        return 'no-engine';
+    if (!p.sourceConfigured)
+        return 'no-source';
+    if (!p.sourceCurrent)
+        return 'paused';
+    if (!p.ownerWaitExpired)
+        return 'starting';
+    return 'failed';
+}
+
+export const SETUP_TEXT = Object.freeze({
+    quick: Object.freeze({
+        'no-engine': 'Install the correctiond engine package',
+        'no-source': "Add 'English (US, autocorrect)' as an input source. If it isn't listed, run `ibus restart` first",
+        'paused': 'Paused: another input source is active (Super+Space to switch)',
+        'starting': 'Starting…',
+        'failed': "The autocorrect engine isn't reachable. Run `ibus restart`; if it still fails, see `journalctl --user -b | grep correctiond`",
+    }),
+    settings: Object.freeze({
+        'no-engine': 'Install the correctiond engine package',
+        'no-source': "Add 'English (US, autocorrect)' as an input source. If it isn't listed, press Restart below.",
+        'paused': 'Paused: another input source is active (Super+Space to switch)',
+        'starting': 'Starting…',
+        'failed': "The autocorrect engine isn't reachable. Press Restart below; if it still fails, see `journalctl --user -b | grep correctiond`",
+    }),
+});
+
+/**
+ * Settings row extra line when setupState is null.
+ * @param {string[]} appNames
+ * @returns {string}
+ */
+export function correctsInLine(appNames) {
+    return `Corrects in: ${appNames.join(', ')}. Add apps on the Apps page.`;
+}
+
+/**
+ * @param {[string, string]} source an input-sources entry
+ * @returns {boolean}
+ */
+export function isCorrectiondSource([type, id]) {
+    return type === 'ibus' && id.startsWith('correctiond:');
+}

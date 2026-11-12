@@ -9,6 +9,9 @@
 #   old           an engine from before GetStatus: no GetStatus, SetLearning,
 #                 RecentWords, ForgetWord, ListWords or ForgetWords (callers
 #                 get UnknownMethod)
+#   v0.1.0        exactly the method set of the v0.1.0 tag (V0_1_0_XML, frozen:
+#                 later additions to XML do not change it); an unknown mode
+#                 exits with an error
 #   readme        for scripts/readme-screenshots.sh: invented counts (128
 #                 corrections, 9 undone, 2,431 words learned) and five
 #                 invented recent words
@@ -34,8 +37,25 @@ NEW_METHODS = '''<method name="GetStatus"><arg type="s" direction="out"/></metho
 <method name="ForgetWord"><arg type="s" direction="in"/><arg type="b" direction="out"/></method>
 <method name="ListWords"><arg type="a(sutb)" direction="out"/></method>
 <method name="ForgetWords"><arg type="as" direction="in"/><arg type="u" direction="out"/></method>'''
+# The method set of the v0.1.0 tag, written out in full and never edited: it
+# is what the extension must keep working against (docs/ARCHITECTURE.md).
+V0_1_0_XML = '''<node><interface name="org.nadelacruz.Correctiond1">
+<method name="SetFocusedApp"><arg type="s" direction="in"/></method>
+<method name="SetOskVisible"><arg type="b" direction="in"/></method>
+<method name="SetEnabled"><arg type="b" direction="in"/></method>
+<method name="Purge"/>
+<method name="GetStats"><arg type="s" direction="out"/></method>
+<method name="GetStatus"><arg type="s" direction="out"/></method>
+<method name="SetLearning"><arg type="b" direction="in"/></method>
+<method name="RecentWords"><arg type="as" direction="out"/></method>
+<method name="ForgetWord"><arg type="s" direction="in"/><arg type="b" direction="out"/></method>
+<method name="ListWords"><arg type="a(sutb)" direction="out"/></method>
+<method name="ForgetWords"><arg type="as" direction="in"/><arg type="u" direction="out"/></method>
+</interface></node>'''
 MODE = sys.argv[2] if len(sys.argv) > 2 else 'normal'
-XML = XML.replace('NEW_METHODS', '' if MODE == 'old' else NEW_METHODS)
+if MODE not in ('normal', 'forget-fails', 'old', 'readme', 'v0.1.0'):
+    sys.exit(f'unknown mode {MODE!r}')
+XML = V0_1_0_XML if MODE == 'v0.1.0' else XML.replace('NEW_METHODS', '' if MODE == 'old' else NEW_METHODS)
 PURGE_DELAY_MS = 2500
 state = {'learning': True}
 README_STATS = '{"corrections":128,"reverts":9,"words_learned":2431,"persistent":true}'

@@ -13,6 +13,9 @@
 #   [modules] touch = false: no OSK watcher, nothing reported.
 # Scenario 4 (late-osk): GJS OSK is installed but enabled only 3 s after us
 #   (load order): the keyboard is still seen.
+# Scenario 5 (v010): the fake in `v0.1.0` mode, the method set of the v0.1.0
+#   tag: the menu works, with no stack trace and no UnknownMethod line (the
+#   D-Bus compatibility policy in docs/ARCHITECTURE.md).
 # Scenarios 1 and 2 then drive the Quick Settings menu through org.gnome.Shell.Eval (the
 # test-only helper extension scripts/smoke-unsafe@correctiond.test turns on
 # unsafe mode, which Eval needs; it is installed only in the temp HOME):
@@ -64,7 +67,9 @@ if [[ "${1:-}" == --inner ]]; then
         (sleep "$1"; exec python3 -I "$repo/scripts/fake_correctiond.py" "$SMOKE_DIR/calls.log" "${2:-normal}") &
         fake=$!
     }
-    start_fake "$FAKE_DELAY"
+    fake_mode=normal
+    [[ "${SMOKE_SCENARIO:-full}" == v010 ]] && fake_mode=v0.1.0
+    start_fake "$FAKE_DELAY" "$fake_mode"
     gnome-shell --headless --wayland --no-x11 --virtual-monitor 1280x800 \
         > "$SMOKE_DIR/shell.log" 2>&1 &
     shell=$!
@@ -397,6 +402,18 @@ if [[ "${1:-}" == --inner ]]; then
         ev lg-watcher "$(js "if (e._osk === null) throw new Error('no watcher')")"
         mark open; toggle_osk; sleep 2
         mark close; toggle_osk; sleep 2
+        mark end
+        kill -INT "$shell"; wait "$shell" || true
+        kill "$fake" "$sysbus" 2>/dev/null || true
+        exit 0 ;;
+    v010)
+        # An engine with exactly the method set of the v0.1.0 tag (the
+        # compatibility policy in docs/ARCHITECTURE.md): the menu works as usual.
+        mark toggle-off; ev toggle-off "$(js 't.checked = false')"; sleep 1
+        mark toggle-on; ev toggle-on "$(js 't.checked = true')"; sleep 1
+        mark menu-open; ev menu-open "$(js "$open_menu")"; sleep 1
+        ev v010-menu "$(menu_is "['Correcting', 'Correcting', true, true, true, true, true, true, ['kadto', 'sige']]")"
+        ev v010-close "$(js 'Main.panel.closeQuickSettings()')"
         mark end
         kill -INT "$shell"; wait "$shell" || true
         kill "$fake" "$sysbus" 2>/dev/null || true
@@ -942,6 +959,19 @@ check late-osk "OSK close reported" between late-osk close end "SetOskVisible (F
 check late-osk "every Eval succeeded" bash -c "! grep -q '^EVAL-FAILED' '$out/late-osk/calls.log'"
 check late-osk "no stack trace through the extension" no_trace late-osk
 
+run_one v010 0 0 '' v010
+check v010 "shell started, engine reached (v0.1.0 mode owned the name)" \
+    bash -c "grep -qx 'owned v0.1.0' '$out/v010/calls.log'"
+check v010 "toggle off sends SetEnabled(false)" between v010 toggle-off toggle-on "SetEnabled (False,)"
+check v010 "toggle on sends SetEnabled(true)" between v010 toggle-on menu-open "SetEnabled (True,)"
+check v010 "menu open calls GetStatus" between v010 menu-open end "GetStatus"
+check v010 "menu open calls RecentWords" between v010 menu-open end "RecentWords"
+check v010 "the menu shows the full state" eval_ok v010 v010-menu
+check v010 "every Eval succeeded" bash -c "! grep -q '^EVAL-FAILED' '$out/v010/calls.log'"
+check v010 "no UnknownMethod in the shell log or the calls" \
+    bash -c "! grep -qi 'UnknownMethod' '$out/v010/shell.log' '$out/v010/calls.log'"
+check v010 "no stack trace through the extension" no_trace v010
+
 run_one e1 0 997 '' e1
 check e1 "shell started" loaded e1
 check e1 "every Eval succeeded" bash -c "! grep -q '^EVAL-FAILED' '$out/e1/calls.log'"
@@ -952,7 +982,7 @@ done
 check e1 "no stack trace through the extension" no_trace e1
 
 if [[ "$fail" != 0 ]]; then
-    for n in e1 osk no-osk touch-off late-osk live-config no-config-dir live-gjs-osk; do
+    for n in e1 osk no-osk touch-off late-osk v010 live-config no-config-dir live-gjs-osk; do
         echo "== $n/calls.log"; cat "$out/$n/calls.log" 2>/dev/null || true
         echo "== $n/shell.log (extension lines)"
         grep -n -B4 "correctiond\|$uuid" "$out/$n/shell.log" 2>/dev/null || true

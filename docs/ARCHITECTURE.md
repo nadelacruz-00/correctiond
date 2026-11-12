@@ -301,6 +301,16 @@ Errors: `org.freedesktop.DBus.Error.AccessDenied`, and
 booleans, fixed codes and fixed texts; words appear only in `RecentWords` and
 `ListWords`.
 
+Compatibility policy. The extension and the engine ship apart, so an
+extension may meet an older engine. The engine never removes or renames a
+method on this interface; a deprecated name stays as an alias. Every method
+added after `v0.1.0` gets an `UnknownMethod` fallback in the extension, as
+`GetStatus` has (the extension treats an engine without it as an older
+engine and hides what needs it). The `v0.1.0` mode of
+`scripts/fake_correctiond.py`, a frozen copy of that tag's method set, runs
+in the `v010` scenario of `scripts/extension-smoke.sh` and enforces this: the
+menu must work with no stack trace and no `UnknownMethod` line.
+
 ### `org.nadelacruz.CorrectiondCompanion1` (extension)
 
 Exported by the extension inside GNOME Shell at

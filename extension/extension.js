@@ -28,6 +28,10 @@ import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Lib from './lib.js';
 import {parseConfig} from './config.js';
 import {OskWatcher} from './osk.js';
+import {getInputSourceManager} from 'resource:///org/gnome/shell/ui/status/keyboard.js';
+
+// Monotonic milliseconds, for the first-run wait.
+const nowMs = () => GLib.get_monotonic_time() / 1000;
 
 const BUS_NAME = 'org.nadelacruz.Correctiond1';
 const OBJECT_PATH = '/org/nadelacruz/Correctiond';
@@ -152,6 +156,14 @@ export default class CorrectiondCompanion extends Extension {
             Gio.DBusProxyFlags.DO_NOT_CONNECT_SIGNALS |
             Gio.DBusProxyFlags.DO_NOT_AUTO_START);
 
+        // First-run guidance (spec 8): probes, wait clock and the one timer.
+        this._componentProbe = null; // smoke hook: a function replaces the file check
+        this._inputSettings = new Gio.Settings({schema_id: 'org.gnome.desktop.input-sources'});
+        this._setupSince = null;
+        this._sourcePrevCurrent = false;
+        this._setupTimerId = 0;
+        this._menuOpen = false;
+
         this._subtitleId = 0;
         this._focusWindow = null;
         this._wmClassId = 0;
@@ -217,6 +229,9 @@ export default class CorrectiondCompanion extends Extension {
         this._refreshSerial++;
         this._subtitleSerial++;
         this._indicator.toggle.menu.disconnect(this._menuOpenId);
+        this._menuOpen = false;
+        this._clearSetupTimer();
+        this._inputSettings = null;
         this._learnSwitch.disconnect(this._learnId);
         this._appItem = this._countsItem = this._learnSwitch = this._recentSection = null;
         this._learnSeparator = this._recentHeader = null;
@@ -259,8 +274,10 @@ export default class CorrectiondCompanion extends Extension {
      * follows GetStatus. Also runs when it goes away, for the subtitle. */
     _onOwner() {
         this._queueSubtitle();
-        if (!this._proxy?.g_name_owner)
+        if (!this._proxy?.g_name_owner) {
+            this._setupSince = nowMs();
             return;
+        }
         this._logged.clear();
         this._app = new Lib.Latch(null);
         this._sendApp();
@@ -507,8 +524,11 @@ export default class CorrectiondCompanion extends Extension {
         menu.addAction('Autocorrect Settings…', () => this._openSettings());
 
         this._menuOpenId = menu.connect('open-state-changed', (_m, open) => {
+            this._menuOpen = open;
             if (open)
                 this._refreshMenu();
+            else
+                this._clearSetupTimer();
         });
     }
 
@@ -553,6 +573,57 @@ export default class CorrectiondCompanion extends Extension {
         this._refresh().catch(() => this._logOnce('refresh', 'menu refresh failed'));
     }
 
+    /** The first-run state (Lib.setupState) from the live probes. */
+    _probeSetup() {
+        const installed = typeof this._componentProbe === 'function'
+            ? !!this._componentProbe()
+            : Lib.componentInstalledIn(Lib.componentDirs(GLib.getenv('IBUS_COMPONENT_PATH')),
+                path => GLib.file_test(path, GLib.FileTest.IS_REGULAR));
+        let configured = false;
+        try {
+            configured = this._inputSettings.get_value('sources').deepUnpack()
+                .some(src => Lib.isCorrectiondSource(src));
+        } catch (e) {
+            this._logOnce('sources', 'cannot read the input sources');
+        }
+        let current = false;
+        try {
+            const src = getInputSourceManager().currentSource;
+            current = !!src && Lib.isCorrectiondSource([src.type, src.id]);
+        } catch (e) {
+            this._logOnce('currentSource', 'cannot read the current input source');
+        }
+        if (current && !this._sourcePrevCurrent)
+            this._setupSince = nowMs();
+        this._sourcePrevCurrent = current;
+        return Lib.setupState({
+            componentInstalled: installed,
+            sourceConfigured: configured,
+            sourceCurrent: current,
+            engineOwned: !!this._proxy?.g_name_owner,
+            ownerWaitExpired: this._setupSince !== null &&
+                nowMs() - this._setupSince >= Lib.SETUP_WAIT_MS,
+        });
+    }
+
+    /** While the menu is open and the state is 'starting': one timer that
+     * refreshes the menu once the wait is over. Never a second. */
+    _armSetupTimer(starting) {
+        if (!starting || !this._menuOpen || this._setupTimerId)
+            return;
+        this._setupTimerId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, Lib.SETUP_WAIT_MS, () => {
+            this._setupTimerId = 0;
+            this._refreshMenu();
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
+    _clearSetupTimer() {
+        if (this._setupTimerId)
+            GLib.source_remove(this._setupTimerId);
+        this._setupTimerId = 0;
+    }
+
     /** Fill the menu: GetStats, GetStatus and RecentWords, once per open. */
     async _refresh() {
         const serial = ++this._refreshSerial;
@@ -564,6 +635,13 @@ export default class CorrectiondCompanion extends Extension {
         const statsObj = this._parseReply('GetStats', stats);
         const statusObj = this._statusReply(status);
         const text = Lib.statusText(statsObj, statusObj, this._appName());
+        const setup = this._probeSetup();
+        if (setup !== null) {
+            text.appLine = Lib.SETUP_TEXT.quick[setup];
+            text.countsLine = null;
+            text.controls = false;
+        }
+        this._armSetupTimer(setup === 'starting');
         this._indicator.toggle.subtitle = text.subtitle;
         this._appItem.label.text = text.appLine;
         this._countsItem.label.text = text.countsLine ?? '';

@@ -250,12 +250,82 @@ if [[ "${1:-}" == --inner ]]; then
     }
     # Wait for the extension's first state push (startup time varies), then
     # give gjs-osk time to build its keyboard.
-    for _ in $(seq 60); do
-        grep -qs SetEnabled "$SMOKE_DIR/calls.log" && break
-        sleep 0.5
-    done
-    sleep 2
+    if [[ "${SMOKE_SCENARIO:-full}" == e1 ]]; then
+        # The engine is not started yet: drop the delayed fake (its sleep too).
+        kill "$fake" 2>/dev/null || true; pkill -f 'sleep 997' || true
+        sleep 8
+    else
+        for _ in $(seq 60); do
+            grep -qs SetEnabled "$SMOKE_DIR/calls.log" && break
+            sleep 0.5
+        done
+        sleep 2
+    fi
     case "${SMOKE_SCENARIO:-full}" in
+    e1)
+        # The Quick Settings texts (lib.js SETUP_TEXT.quick) as JS string literals.
+        q_noengine='"Install the correctiond engine package"'
+        q_nosource=$'"Add \'English (US, autocorrect)\' as an input source. If it isn\'t listed, run `ibus restart` first"'
+        q_paused='"Paused: another input source is active (Super+Space to switch)"'
+        q_starting='"Starting…"'
+        q_failed=$'"The autocorrect engine isn\'t reachable. Run `ibus restart`; if it still fails, see `journalctl --user -b | grep correctiond`"'
+        probe() { js "e._componentProbe = () => $1"; }
+        # app_is NAME TEXT: after a fresh menu open, the app line is TEXT, the
+        # counts and controls are hidden and the subtitle is Engine not running.
+        app_is() {
+            ev "$1-open" "$(js "$open_menu")"; sleep 1
+            ev "$1" "$(js "if (t.subtitle !== 'Engine not running') throw new Error(t.subtitle); " \
+                "if (e._countsItem.visible || e._learnSwitch.visible || e._recentHeader.visible) " \
+                "throw new Error('counts or controls shown'); " \
+                "const got = e._appItem.label.text; if (got !== $2) throw new Error(got)")"
+        }
+        ev e1-no-engine-probe "$(probe false)"
+        app_is e1-no-engine "$q_noengine"
+        ev e1-no-engine-close "$(js 'Main.panel.closeQuickSettings()')"
+        ev e1-no-source-probe "$(probe true)"
+        app_is e1-no-source "$q_nosource"
+        ev e1-no-source-close "$(js 'Main.panel.closeQuickSettings()')"
+        # An xkb source is current: paused.
+        ev e1-sources "$(js "e._inputSettings.set_value('sources', " \
+            "new GLib.Variant('a(ss)', [['xkb', 'us'], ['ibus', 'correctiond:us']])); " \
+            "e._inputSettings.set_uint('current', 0)")"; sleep 1
+        app_is e1-paused "$q_paused"
+        ev e1-paused-close "$(js 'Main.panel.closeQuickSettings()')"
+        # The correctiond source becomes current; the fake never starts.
+        # Activating the ibus source would make the Shell's ibus-daemon start the
+        # installed engine: report it as current instead (the shell's own getter).
+        ev e1-current "$(js "const m = Main.panel.statusArea.keyboard._inputSourceManager; " \
+            "Object.defineProperty(m, 'currentSource', {configurable: true, " \
+            "get: () => ({type: 'ibus', id: 'correctiond:us'})})")"; sleep 1
+        mark e1-starting
+        ev e1-starting-open "$(js "$open_menu")"; sleep 1
+        ev e1-starting "$(js "const got = e._appItem.label.text; " \
+            "if (got !== $q_starting) throw new Error(got)")"
+        ev e1-timer-one "$(js "if (!e._setupTimerId) throw new Error('no timer'); " \
+            "globalThis.smokeTimer = e._setupTimerId")"
+        ev e1-refresh-again "$(js "e._refreshMenu()")"; sleep 1
+        ev e1-timer-same "$(js "if (e._setupTimerId !== globalThis.smokeTimer) throw new Error('a second timer')")"
+        sleep 6
+        mark e1-failed
+        ev e1-failed "$(js "const got = e._appItem.label.text; " \
+            "if (got !== $q_failed) throw new Error(got); " \
+            "if (e._setupTimerId) throw new Error('timer left')")"
+        ev e1-failed-close "$(js 'Main.panel.closeQuickSettings()')"
+        ev e1-closed "$(js "if (e._setupTimerId) throw new Error('timer after close')")"
+        # Close removes a pending timer: reopen on a fresh start.
+        ev e1-live-probe "$(probe true)"
+        mark e1-live
+        start_engine; sleep 2
+        ev e1-live-menu "$(js "$open_menu")"; sleep 1
+        ev e1-live "$(menu_is "['Correcting', 'Correcting', true, true, true, true, true, true, ['kadto', 'sige']]")"
+        ev e1-live-close "$(js 'Main.panel.closeQuickSettings()')"
+        ev e1-uncurrent "$(js "delete Main.panel.statusArea.keyboard._inputSourceManager.currentSource")"
+        ev e1-disable "$(js "e._indicator.toggle.menu.open(); e.disable(); " \
+            "if (e._setupTimerId) throw new Error('timer after disable'); e.enable()")"
+        mark end
+        kill -INT "$shell"; wait "$shell" || true
+        kill "$fake" "$sysbus" 2>/dev/null || true
+        exit 0 ;;
     touch-off)
         mark open; toggle_osk; sleep 2
         ev touch-off-null "$(js "if (e._osk !== null) throw new Error('an OSK watcher exists')")"
@@ -388,10 +458,14 @@ if [[ "${1:-}" == --inner ]]; then
     ev state-relock "$(menu_is "['Learning paused', 'Correcting', true, true, true, false, true, true, ['kadto', 'sige']]")"
     ev relock-close "$(js 'Main.panel.closeQuickSettings()')"
     mark restart-engine; stop_engine; sleep 1
+    # Down with the component missing: the toggle says Engine not running, the
+    # app line is the setup text (spec 8.4).
+    ev down-probe "$(js "e._componentProbe = () => false")"
     ev down-menu "$(js "$open_menu")"; sleep 1
-    down="['Engine not running', 'Engine not running', false, false, false, false, false, false, "
+    down="['Engine not running', 'Install the correctiond engine package', false, false, false, false, false, false, "
     ev state-down "$(menu_is "$down['(none yet this session)']]")"
     ev down-close "$(js 'Main.panel.closeQuickSettings()')"
+    ev down-unprobe "$(js "e._componentProbe = null")"
     start_engine; sleep 2
     ev restarted-menu "$(js "$open_menu")"; sleep 1
     ev state-restarted "$(menu_is "['Correcting', 'Correcting', true, true, true, true, true, true, ['kadto', 'sige']]")"
@@ -868,8 +942,17 @@ check late-osk "OSK close reported" between late-osk close end "SetOskVisible (F
 check late-osk "every Eval succeeded" bash -c "! grep -q '^EVAL-FAILED' '$out/late-osk/calls.log'"
 check late-osk "no stack trace through the extension" no_trace late-osk
 
+run_one e1 0 997 '' e1
+check e1 "shell started" loaded e1
+check e1 "every Eval succeeded" bash -c "! grep -q '^EVAL-FAILED' '$out/e1/calls.log'"
+for ev_name in e1-no-engine e1-no-source e1-paused e1-starting e1-timer-one e1-timer-same \
+    e1-failed e1-closed e1-live e1-disable; do
+    check e1 "$ev_name" eval_ok e1 "$ev_name"
+done
+check e1 "no stack trace through the extension" no_trace e1
+
 if [[ "$fail" != 0 ]]; then
-    for n in osk no-osk touch-off late-osk live-config no-config-dir live-gjs-osk; do
+    for n in e1 osk no-osk touch-off late-osk live-config no-config-dir live-gjs-osk; do
         echo "== $n/calls.log"; cat "$out/$n/calls.log" 2>/dev/null || true
         echo "== $n/shell.log (extension lines)"
         grep -n -B4 "correctiond\|$uuid" "$out/$n/shell.log" 2>/dev/null || true

@@ -318,6 +318,30 @@ export default class CorrectiondCompanion extends Extension {
         this._logOnce(`${method}:${name}`, `${method} failed: ${name}`);
     }
 
+    /**
+     * What openPreferences() does, but with the failure caught. In GNOME
+     * Shell 50, openPreferences() returns nothing and the shell makes this
+     * call without a handler, so a failure is only an "Unhandled promise
+     * rejection" stack trace in the journal, without the error.
+     */
+    _openSettings() {
+        Gio.DBus.session.call(
+            'org.gnome.Shell.Extensions',
+            '/org/gnome/Shell/Extensions',
+            'org.gnome.Shell.Extensions',
+            'OpenExtensionPrefs',
+            new GLib.Variant('(ssa{sv})', [this.uuid, '', {}]),
+            null,
+            Gio.DBusCallFlags.NONE,
+            -1,
+            null
+        ).catch(e => {
+            const name = (e instanceof GLib.Error && Gio.DBusError.get_remote_error(e)) || 'local';
+            this._logOnce(`OpenExtensionPrefs:${name}`,
+                `cannot open Settings: ${name}: ${e.message}`);
+        });
+    }
+
     _logOnce(key, msg) {
         if (!this._logged || this._logged.has(key))
             return;
@@ -500,7 +524,7 @@ export default class CorrectiondCompanion extends Extension {
         this._showRecent([]);
 
         menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
-        menu.addAction('Autocorrect Settings…', () => this.openPreferences());
+        menu.addAction('Autocorrect Settings…', () => this._openSettings());
 
         this._menuOpenId = menu.connect('open-state-changed', (_m, open) => {
             if (open)

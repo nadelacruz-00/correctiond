@@ -424,8 +424,10 @@ if [[ "${1:-}" == --inner ]]; then
     stop_client
     # --- the real Settings window, in GNOME's real preferences service ---
     mark prefs; start_prefs
-    gdbus call --session -d org.gnome.Shell.Extensions -o /org/gnome/Shell/Extensions \
-        -m org.gnome.Shell.Extensions.OpenExtensionPrefs "$uuid" '' '{}' >> "$SMOKE_DIR/calls.log" 2>&1
+    # Through the menu's own "Autocorrect Settings…" item (_openSettings).
+    ev prefs-menu-item "$(js "const i = t.menu._getMenuItems()" \
+        ".find(m => m.label?.text === 'Autocorrect Settings…'); " \
+        "if (!i) throw new Error('no Settings item'); i.activate(null)")"
     wait_prefs 'SMOKE-PREFS ready'; sleep 1
     focus_pid prefs "$prefs"
     evlog prefs-wm-class 'global.display.focus_window?.get_wm_class() ?? null'
@@ -614,6 +616,7 @@ prefs_checks() {
     local n=$1 log="$out/$1/prefs.log"
     echo "measured $n: $(grep '^EVAL-OUT prefs-' "$out/$n/calls.log" | tr '\n' ' ')"
     check "$n" "prefs: every service wait succeeded" bash -c "! grep -qE '^PREFS-(TIMEOUT|ALIVE)' '$out/$n/calls.log'"
+    check "$n" "prefs: the menu's Settings item ran" eval_ok "$n" prefs-menu-item
     check "$n" "prefs: GNOME's service opened our Settings window" grep -q '^SMOKE-PREFS ready' "$log"
     check "$n" "prefs: the real window's wm_class is $settings_wm_class" \
         grep -qxF "EVAL-OUT prefs-wm-class (true, '\"$settings_wm_class\"')" "$out/$n/calls.log"

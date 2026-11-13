@@ -192,9 +192,10 @@ your environment: `sudo DESTDIR=/path/to/root ./install.sh`.
    ibus restart
    ```
 
-2. **Add the input source.** Open Settings, Keyboard, Add Input Source, then
-   TODO-VM. The entry is "English (US, autocorrect)". Colemak typists choose
-   the Colemak entry instead.
+2. **Add the input source.** Open Settings, Keyboard, Add Input Source, and
+   type `autocorrect` in the search field. GNOME lists the entries under
+   "Other", not under English. Choose "English (US, autocorrect)", then Add.
+   Colemak typists choose "English (Colemak, autocorrect)" instead.
 
 3. **Install the companion extension.** Without it, the engine cannot tell
    which app has focus, so it learns and never corrects. Use the install
@@ -283,7 +284,8 @@ an error if a package owns the component file. With a source build, run
    rerun it after a rebuild; run `ibus restart` instead.
 
 4. **Add the input source.** Open GNOME Settings, Keyboard, Input Sources, add
-   an input source, choose English, then "English (US, autocorrect)". It
+   an input source, type `autocorrect` in the search field, then choose
+   "English (US, autocorrect)" (listed under "Other"). It
    replaces your plain US layout, and Super+Space switches input sources as
    usual. To select it from a terminal for a quick test:
 

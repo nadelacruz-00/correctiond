@@ -361,8 +361,6 @@ Then, for all formats:
    gnome-extensions uninstall correctiond-companion@nadelacruz-00.github.io
    ```
 
-   TODO-VM: check this command on a clean install.
-
 4. Optionally remove the remaining files: `~/.config/correctiond/` (settings)
    and `~/.local/share/correctiond/` (lexicons and the import report). If the
    keyring item "Correctiond learning store key" is still there, delete it in

@@ -434,3 +434,29 @@ Results:
 Not tested here: `gnome-extensions uninstall` (needs a running Shell),
 `rpm-ostree`, the Add Input Source text, the E1 states, typing, and the
 x86_64 files.
+
+## Upgrade from source on the desktop (Task 20, 2026-11-13)
+
+Ubuntu 26.04.1, GNOME Shell 50.1, snap Firefox, gjs-osk installed. Before:
+a source install (the component's `<exec>` pointed at a build in the source
+tree, the file owned by no package) and the extension copied from source.
+Release files from the same `workflow_dispatch` run as above.
+
+- `sudo apt install ./correctiond_arm64.deb` replaced the unowned component
+  with no prompt. After `ibus restart`, `<exec>` is
+  `/usr/lib/correctiond/engine`.
+- `gnome-extensions uninstall correctiond-companion@nadelacruz-00.github.io`
+  removed the extension's folder. `gnome-extensions install --force` of the
+  release zip, a new login, and `gnome-extensions enable` brought it back.
+- `correctiond doctor`: every check `ok`; `engine 0.1.0`; `languages en
+  (builtin), tl (lexicon present), war (lexicon present)`;
+  `modules.touch: ok derived true` (no `touch` key in config.toml, gjs-osk
+  present).
+- The Words page showed the same count before and after. The user reports
+  that autocorrect works after the upgrade.
+- `doctor` shows the extension's version as `?`: the release zip has no
+  `version` in `metadata.json` (extensions.gnome.org adds one).
+
+Still not recorded: the Add Input Source click path (README `TODO-VM`), the
+E1 states in the extension-first order (needs a clean machine), and
+`rpm-ostree`.
